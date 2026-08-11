@@ -1,0 +1,25 @@
+[project]
+name = "orchestrator"
+version = "0.1.0"
+description = "Cost-aware RL orchestration with an executable evaluation harness"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.116.0",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-timeout>=2.3"]
+
+[project.scripts]
+orch = "orchestrator.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
