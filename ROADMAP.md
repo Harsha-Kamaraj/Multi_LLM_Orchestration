@@ -1,0 +1,128 @@
+# Roadmap
+
+Ten weeks, four people, four phases with explicit gates. A phase does not start
+until the previous gate passes; a failed gate changes the plan rather than being
+retried indefinitely.
+
+Full rationale in the [design doc](./cost-aware-llm-orchestration-design.html).
+
+---
+
+## Phase 0 — Contracts & feasibility · Week 1
+
+Establish the shared schemas and find out whether the premise holds before
+anyone commits four weeks to it.
+
+**Deliverables**
+
+- `schemas/` frozen: `Task` and `Rollout` JSON schemas, signed off by all four roles
+- Synthetic rollout generator emitting schema-valid rows with a planted, known-strength signal
+- 200-task pilot sweep (small ×3 seeds, large ×3 seeds), fully graded
+- Oracle-gap study
+- Power calculation off measured discordance rates
+
+**Gate — measure all four, hard stop if `AUC_D1` fails**
+
+| Quantity | Definition | Threshold | If it fails |
+|---|---|---|---|
+| `A_large − A_small` | pass@1 difference between arms | ≥ 8 pp | Arms aren't differentiated — shrink the small model |
+| `A_oracle − A_large` | headroom above the best single arm | ≥ 5 pp | Large model dominates; only cost savings available, not accuracy |
+| `AUC_D0` | predicting "small solves" from **prompt-only** features | ≥ 0.65 | Pre-generation routing is dead. Move to D1 — expected, not fatal |
+| `AUC_D1` | same, from **post-generation** features | ≥ 0.75 | **Hard stop.** Neither decision point has signal; the premise is false |
+
+Expect `AUC_D0 ≈ 0.60–0.68` and `AUC_D1 ≈ 0.80–0.90`. That asymmetry is the most
+important number in the project and it should drive the architecture.
+
+---
+
+## Phase 1 — MVP frontier · Weeks 2–4
+
+The minimum system that produces a defensible result. Nothing outside this list ships.
+
+**Deliverables**
+
+- Two worker models on vLLM + characterization pass producing cost/latency coefficients
+- 1,000 tasks from MBPP+ / HumanEval+, split 60/20/20 at task level, manifest hashed and committed
+- Frozen-ladder sweep: 6 generations per task (small ×3, large ×3), all graded, all logged to Parquet
+- Calibrated `P(pass | x, arm)` at D0 and D1, plus cost and latency regressors
+- λ-sweep producing the cost–accuracy frontier
+- Six baselines: `always_small`, `always_large`, `random_route(p)`, `best_of_n_small`,
+  `verifier_gated_cascade`, `oracle_router`
+- Paired bootstrap CIs and McNemar tests on the frozen test split, opened exactly once
+
+**Gate:** policy beats `verifier_gated_cascade` on at least one frontier region,
+with a confidence interval excluding zero.
+
+---
+
+## Phase 2 — Repair & probe · Weeks 5–7
+
+**Deliverables**
+
+- Repair ladder (one round, seeded from each small-model sample)
+- Self-consistency probe arm — spend *k*=3 cheap samples to buy a difficulty signal
+- Calibration report (ECE, reliability diagrams) for every value head
+- Full failure taxonomy, auto-tagged, validated against 100 hand-labelled samples
+  with inter-rater agreement measured on 25
+
+**Gate:** repair pays for itself — Δaccuracy / Δcost beats escalation in some λ region.
+
+---
+
+## Phase 3 — Hardening & online · Weeks 8–10
+
+**Deliverables**
+
+- LiveCodeBench post-cutoff replication (contamination-controlled split)
+- Online router + shadow A/B harness
+- Ablations: feature groups, calibration on/off, ladder depth
+- `decompose` arm — **only if** a multi-step dataset (SWE-bench-lite or similar) landed
+
+**Gate:** the result replicates on the contamination-controlled split. If the routing
+win exists only on the contaminated split, that is the actual finding — report it.
+
+---
+
+## Phase 4 — Optional
+
+Three-rung cascade · LinUCB online exploration · GRPO policy LM · full sequential MDP.
+
+**Gate:** only with a measured gap the tabular policy demonstrably cannot close.
+Using 7B parameters to choose among three arms is the wrong tool until the numbers
+say otherwise.
+
+---
+
+## Critical path and parallelism
+
+- **Week 1 is a hard serialization point.** Schemas must be frozen by day 3 — every
+  downstream role builds against them. A schema change in week 5 costs the team a week.
+- **R2's task manifest blocks R1's sweep** and nothing else. It is the only true
+  cross-role dependency in Phase 1.
+- **R3 and R4 never block on GPUs.** They develop against the synthetic rollout
+  generator, which doubles as a correctness test for the policy and stats code —
+  the right answer is known by construction.
+- **The real rollout store lands in week 2.** R3/R4 switch to it by changing one path.
+  If that switch requires code changes, the contract was violated.
+
+```
+week 1     ALL ──── schema freeze (day 3)
+                     │
+           R2 ───── tasks + splits ────┐
+                                       ▼
+week 2     R1 ───── sweep ────── rollout store ─────┐
+                                                    ▼
+weeks 2-4  R3 ── value models ── decisions ──► R4 ── report
+           (fixtures until week 2, then real data, no code change)
+```
+
+---
+
+## Slippage policy
+
+If Phase 1 slips past week 5, cut the probe arm and the online router — **not the
+statistics**. A smaller result reported rigorously is worth more than a larger result
+reported loosely, both for the product decision and for the portfolio.
+
+If the schedule collapses entirely and only one thing survives, make it the
+**evaluation harness with the six baselines and paired confidence intervals**.
