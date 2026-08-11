@@ -12,6 +12,7 @@ skips real work or overwrites it, and the store ends up with rows whose
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -176,6 +177,34 @@ class CorpusView:
 
     def split_of(self, task_id: str) -> str:
         return self.splits.get(task_id, "")
+
+    @property
+    def fingerprint(self) -> str:
+        """Content hash of the corpus as this sweep will use it.
+
+        Folded into the `run_id`, so regenerating the task manifest produces a
+        new run rather than silently extending the old one. Hashing only the
+        *path* would let R2 rewrite `data/tasks/pilot.jsonl` under a sweep and
+        have the new tasks land in a directory whose manifest describes the
+        previous corpus.
+
+        Covers exactly the fields that reach a prompt or the extractor —
+        prompt, entrypoint, visible tests — and not the hidden suite, which R1
+        never renders and which R2 may legitimately attach later without
+        changing what was generated.
+        """
+        h = hashlib.sha256()
+        for task in sorted(self.tasks, key=lambda t: t.task_id):
+            for part in (
+                task.task_id,
+                task.prompt,
+                task.entrypoint,
+                str(task.metadata.get("visible_tests", "")),
+                self.split_of(task.task_id),
+            ):
+                h.update(part.encode("utf-8"))
+                h.update(b"\x00")
+        return h.hexdigest()[:12]
 
     def counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}

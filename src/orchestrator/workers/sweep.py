@@ -81,7 +81,7 @@ class SweepConfig:
     truncation_alarm: float = DEFAULT_TRUNCATION_ALARM
     dataset: str = ""
 
-    def identity(self) -> dict[str, Any]:
+    def identity(self, corpus_fingerprint: str = "") -> dict[str, Any]:
         """The subset of config that defines the experiment.
 
         Deliberately excludes output paths, batch size, and resume behaviour:
@@ -89,14 +89,21 @@ class SweepConfig:
         in would make an identical experiment resumed with a different batch
         size land in a different run directory.
 
-        `params_hash` per arm *is* included, which is what makes a template or
-        sampling change produce a new `run_id` automatically.
+        Two things *are* included, and both close a hole:
+
+        * **`params_hash` per arm**, so a template or sampling change produces
+          a new `run_id` automatically.
+        * **the corpus fingerprint**, so regenerating the task manifest does
+          too. Hashing only the path would let R2 rewrite the manifest and
+          have the new tasks land in a run whose sealed sibling describes the
+          previous corpus.
         """
         arms = resolve_arms(list(self.arms))
         return {
             "arms": {a.name: a.params_hash for a in arms},
             "seeds": list(self.seeds),
             "tasks_path": str(self.tasks_path),
+            "corpus_fingerprint": corpus_fingerprint,
             "splits_path": str(self.splits_path) if self.splits_path else None,
             "include_splits": list(self.include_splits) if self.include_splits else None,
             "limit": self.limit,
@@ -212,7 +219,7 @@ def run_sweep(config: SweepConfig, *, backend: Backend | None = None,
         for warning in warnings:
             log.warning("%s", warning)
 
-        identity = config.identity()
+        identity = config.identity(corpus.fingerprint)
         run_id = make_run_id(identity)
         planned_cells = plan_cells(corpus, arms, config.seeds)
 
