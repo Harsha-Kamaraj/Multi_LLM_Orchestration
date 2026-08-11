@@ -176,3 +176,7 @@ positioned to say it.
 - Compare at unmatched cost
 - Drop `verifier_gated_cascade` from the baseline set
 - Publish from a `-dirty` run
+
+---
+
+[README](./README.md) · [CONTRIBUTING](./CONTRIBUTING.md) · [ROADMAP](./ROADMAP.md) · [ROLES](./ROLES.md)

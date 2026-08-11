@@ -144,3 +144,7 @@ code has been validated against nothing.
 - Parse raw model output — you take code
 - Mutate a graded row; a re-grade is a new `run_id`
 - Open the frozen test split — R4 only
+
+---
+
+[README](./README.md) · [CONTRIBUTING](./CONTRIBUTING.md) · [ROADMAP](./ROADMAP.md) · [ROLES](./ROLES.md)

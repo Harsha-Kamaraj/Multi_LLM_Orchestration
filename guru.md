@@ -143,3 +143,7 @@ estimate. Every cost number downstream is built on it.
 - Mutate a row in the rollout store
 - Grade anything — that's R2's, and the separation is what makes grading trustworthy
 - Open the test split — R4 only
+
+---
+
+[README](./README.md) · [CONTRIBUTING](./CONTRIBUTING.md) · [ROADMAP](./ROADMAP.md) · [ROLES](./ROLES.md)

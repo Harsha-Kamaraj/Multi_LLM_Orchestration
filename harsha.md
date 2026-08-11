@@ -161,3 +161,7 @@ stronger result than a complicated one that can't be attributed.
 - Use a hidden-test outcome as a feature, directly or transitively
 - Bake λ into training
 - Report an uncalibrated probability
+
+---
+
+[README](./README.md) · [CONTRIBUTING](./CONTRIBUTING.md) · [ROADMAP](./ROADMAP.md) · [ROLES](./ROLES.md)
