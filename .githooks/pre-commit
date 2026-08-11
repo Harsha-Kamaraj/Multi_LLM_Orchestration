@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Enforces CONTRIBUTING.md mechanically: scope isolation + commit format.
+# Enable once per clone:  git config core.hooksPath .githooks
+#
+# Bypass with --no-verify only for a genuine emergency; CI re-checks anyway.
+
+set -uo pipefail
+
+die() { printf '\n\033[31mcommit rejected\033[0m — %s\n\n' "$1" >&2; exit 1; }
+
+files=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$files" ] && exit 0
+
+# --- derive the scope of each staged path ----------------------------------
+scope_of() {
+  case "$1" in
+    src/orchestrator/workers/*|bench/*)  echo workers ;;
+    src/orchestrator/graders/*)          echo grader  ;;
+    data/tasks/*)                        echo data    ;;
+    src/orchestrator/policy/*)           echo policy  ;;
+    eval/*)                              echo eval    ;;
+    data/splits/*)                       echo splits  ;;
+    schemas/*)                           echo schemas ;;
+    *.md|LICENSE|CODEOWNERS)             echo docs    ;;
+    *)                                   echo infra   ;;
+  esac
+}
+
+scopes=$(while IFS= read -r f; do scope_of "$f"; done <<<"$files" | sort -u)
+n=$(printf '%s\n' "$scopes" | grep -c .)
+
+# --- one scope per commit ---------------------------------------------------
+if [ "$n" -gt 1 ]; then
+  pair=$(printf '%s\n' "$scopes" | paste -sd+ -)
+  # schemas + infra co-change legitimately (schema plus its fixture generator).
+  if [ "$pair" != "infra+schemas" ]; then
+    {
+      printf '\n\033[31mcommit rejected\033[0m — %d scopes in one commit: %s\n\n' \
+        "$n" "$(printf '%s' "$scopes" | tr '\n' ' ')"
+      printf 'Commits are atomic and single-scope. Staged paths by scope:\n\n'
+      while IFS= read -r f; do printf '  %-8s %s\n' "$(scope_of "$f")" "$f"; done <<<"$files"
+      printf '\nSplit this into one commit per scope:\n'
+      printf '  git reset\n  git add <paths for one scope>\n  git commit\n\n'
+      printf 'See CONTRIBUTING.md → "Every commit must be atomic, reversible, and scoped".\n\n'
+    } >&2
+    exit 1
+  fi
+fi
+
+# --- commit message format --------------------------------------------------
+msg_file="${1:-}"
+[ -z "$msg_file" ] && msg_file=.git/COMMIT_EDITMSG
+[ -f "$msg_file" ] || exit 0
+subject=$(grep -v '^#' "$msg_file" | grep -m1 . || true)
+[ -z "$subject" ] && exit 0
+
+types='feat|fix|perf|refactor|test|data|exp|eval|docs|chore'
+
+if ! printf '%s' "$subject" | grep -qE "^($types): .+"; then
+  die "message must be 'type: message'
+    types: $types
+    got:   $subject"
+fi
+
+# 4-6 words after the type prefix — forces atomic, single-purpose commits
+body=${subject#*: }
+words=$(printf '%s' "$body" | wc -w | tr -d ' ')
+if [ "$words" -lt 4 ] || [ "$words" -gt 6 ]; then
+  die "message body is $words words, must be 4-6:
+    $subject
+
+    If it needs more than 6 words, it is more than one commit."
+fi
+
+printf '%s' "$subject" | grep -qE '\.$' && die "subject must not end with a period"
+
+# authorship is the committer — no tool or pair attribution
+if grep -qiE '^(co-authored-by|signed-off-by):' "$msg_file"; then
+  die "no co-authoring trailers (see CONTRIBUTING.md)"
+fi
+
+# experiment commits must carry a run_id so the result is traceable
+if printf '%s' "$subject" | grep -qE '^exp:'; then
+  grep -qE '^\s*run_id:\s*[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9a-f]{7}-[0-9a-f]{6}' "$msg_file" \
+    || die "exp commits need a run_id in the body:
+
+    exp: sweep lambda across decades
+
+        run_id: 2026-08-14-a3f91c2-7d4e08"
+fi
+
+exit 0
