@@ -36,6 +36,12 @@ FinishReason = Literal["stop", "length", "refusal", "error", "unknown"]
 FINISH_REASONS: tuple[str, ...] = ("stop", "length", "refusal", "error", "unknown")
 
 _FINISH_ALIASES: dict[str, str] = {
+    # Produced by this package itself, not by a backend. Present because
+    # normalization is applied to every value: without these two entries a
+    # recorded failure normalizes to "unknown", `Generation.failed` stops
+    # recognising it, and the sweep reports zero failures while writing them.
+    "error": "error",
+    "unknown": "unknown",
     # vLLM / OpenAI-compatible
     "stop": "stop",
     "length": "length",
