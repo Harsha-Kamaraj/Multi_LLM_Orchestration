@@ -8,7 +8,7 @@ Full rationale in the [design doc](./cost-aware-llm-orchestration-design.html).
 
 ---
 
-## R1 — Serving & Workers
+## R1 — Serving & Workers · Guru
 
 **Owns the GPUs.** `orchestrator/workers/`, `bench/`
 
@@ -42,7 +42,7 @@ with measured wall-clock at R² > 0.9.
 
 ---
 
-## R2 — Verifier & Data
+## R2 — Verifier & Data · Diya
 
 **Owns correctness.** `orchestrator/graders/`, `data/`
 
@@ -75,7 +75,7 @@ malicious solution suite is caught by the hack detector.
 
 ---
 
-## R3 — Policy & Learning
+## R3 — Policy & Learning · Harsha
 
 **No GPU.** `orchestrator/policy/`
 
@@ -105,7 +105,7 @@ def decide(x, lam):
 
 ---
 
-## R4 — Evaluation & Analysis
+## R4 — Evaluation & Analysis · Vivian
 
 **The referee.** `eval/`
 

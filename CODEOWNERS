@@ -1,27 +1,30 @@
 # Ownership is enforced here, not by convention.
 # A PR touching a path requires review from that path's owner.
-# Replace the placeholder handles before the first PR.
+#
+# A handle here only functions if that account has write access to the repo.
+# TODO: @GURU-HANDLE is a placeholder — Guru (R1) is not yet a collaborator.
+#       Add Guru to the repo, then replace the placeholder with the real handle.
 
-# --- R1 · Serving & Workers -------------------------------------------------
-/src/orchestrator/workers/     @r1
-/bench/                        @r1
+# --- R1 · Serving & Workers · Guru ------------------------------------------
+/src/orchestrator/workers/     @GURU-HANDLE
+/bench/                        @GURU-HANDLE
 
-# --- R2 · Verifier & Data ---------------------------------------------------
-/src/orchestrator/graders/     @r2
-/data/tasks/                   @r2
+# --- R2 · Verifier & Data · Diya --------------------------------------------
+/src/orchestrator/graders/     @Diya-R-Gowda
+/data/tasks/                   @Diya-R-Gowda
 
-# --- R3 · Policy & Learning -------------------------------------------------
-/src/orchestrator/policy/      @r3
+# --- R3 · Policy & Learning · Harsha ----------------------------------------
+/src/orchestrator/policy/      @Harsha-Kamaraj
 
-# --- R4 · Evaluation & Analysis ---------------------------------------------
-/eval/                         @r4
-/data/splits/                  @r4
-/schemas/                      @r4
+# --- R4 · Evaluation & Analysis · Vivian ------------------------------------
+/eval/                         @VivianSobers
+/data/splits/                  @VivianSobers
+/schemas/                      @VivianSobers
 
 # --- All-role approval ------------------------------------------------------
 # Destructive schema changes and CI config change everyone's ground truth.
 # (Additive optional fields are exempt — see CONTRIBUTING.md §Schema changes.)
-/schemas/rollout.schema.json   @r1 @r2 @r3 @r4
-/schemas/task.schema.json      @r1 @r2 @r3 @r4
-/.github/workflows/            @r1 @r2 @r3 @r4
-/CODEOWNERS                    @r1 @r2 @r3 @r4
+/schemas/rollout.schema.json   @GURU-HANDLE @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
+/schemas/task.schema.json      @GURU-HANDLE @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
+/.github/workflows/            @GURU-HANDLE @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
+/CODEOWNERS                    @GURU-HANDLE @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
