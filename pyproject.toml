@@ -10,9 +10,16 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-timeout>=2.3"]
+# R1's serving stack. Kept out of the base install so R3 and R4 — who need
+# neither a GPU nor model weights — are never blocked on a CUDA wheel.
+workers = ["vllm>=0.6", "transformers>=4.44"]
+# Parquet is what R3 and R4 read. JSONL stays authoritative, so a sweep host
+# missing pyarrow still produces a complete, readable run.
+store = ["pyarrow>=16.0"]
 
 [project.scripts]
 orch = "orchestrator.cli:main"
+orch-workers = "orchestrator.workers.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -22,4 +29,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# R1's tests live under `bench/` so they fall inside the `workers` commit
+# scope the pre-commit hook derives — a test change and the code it covers
+# belong to the same owner.
+testpaths = ["tests", "bench/tests"]

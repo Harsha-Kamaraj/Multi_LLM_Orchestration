@@ -87,9 +87,11 @@ means prompt format is entirely your business.
 ## Week 1 (Phase 0)
 
 - [ ] Sign off on `schemas/` by day 3 — this is a hard serialization point
+- [x] Sweep runner, rollout store, resume, cost model — built and tested end to end
 - [ ] vLLM up, both models loading, `LLM.generate` producing schema-valid rows
 - [ ] 200-task pilot sweep: small ×3 seeds, large ×3 seeds, handed to R2 for grading
-- [ ] First characterization pass → `cost_coefficients.json`
+      — **blocked on R2's task manifest**, which is my only cross-role dependency
+- [ ] First characterization pass → `cost_coefficients.json` — blocked on GPU access
 
 Your Phase 0 number is `A_large − A_small ≥ 8pp`. If the arms aren't differentiated,
 **shrink the small model** — that's the fix, and it's yours to make.
@@ -146,4 +148,73 @@ estimate. Every cost number downstream is built on it.
 
 ---
 
-[README](./README.md) · [CONTRIBUTING](./CONTRIBUTING.md) · [ROADMAP](./ROADMAP.md) · [ROLES](./ROLES.md)
+## What's built
+
+`src/orchestrator/workers/` and `bench/`. Operational detail lives in
+[bench/README.md](./bench/README.md); this is the map and the reasoning.
+
+| Module | Holds |
+|---|---|
+| `params.py` | `GenParams` and `params_hash` — row identity |
+| `prompts.py` | Versioned templates, hashed by text; the label is not the identity |
+| `arms.py` | Arm registry. Arms name a *role*, never a model id |
+| `extract.py` | Code extraction — mine, not R2's |
+| `backends/` | One interface: `vllm_offline`, `vllm_openai`, `anthropic`, `mock` |
+| `generation.py` | The `Generation` record and its rollout-row projection |
+| `runid.py` | `{date}-{git_sha7}-{config_hash6}`, dirty stamping |
+| `store.py` | Append-only, write-then-seal, checksummed per part |
+| `resume.py` | Keyed on `(task_id, arm, seed, params_hash)` |
+| `corpus.py` | Reads R2's manifest and R4's splits; owns neither |
+| `sweep.py` | The one command |
+| `cost.py` | Coefficients, fitting, and the R² definition-of-done check |
+| `characterize.py` | The grid probe pass, serving-mode only |
+| `impute.py` | Cost sidecars — re-costing never rewrites a row |
+| `cli.py` | `orch-workers` |
+
+270 tests in `bench/tests`, no GPU and no network, a few seconds. The pipeline
+is exercised end to end on every commit rather than when someone remembers.
+
+### Decisions worth arguing with
+
+**Backends are pluggable and the substrate is a flag.** The role doc says vLLM;
+the scaffold was Anthropic-only. Both now sit behind one interface, so "the GPU
+landed" is a `--backend` change and nothing downstream of me moves. It also
+means CI runs the real sweep path against a deterministic mock.
+
+**Sweep-versus-serving is enforced, not documented.** Every row carries `mode`
+and `batch_size`. `characterize` refuses a sweep-mode backend; `validate`
+refuses to regress against sweep rows. Both refusals say why. If someone
+removes those two checks, every latency number in the project silently becomes
+a queue-depth measurement, and it will look like plausible data.
+
+**The corpus content is in the `run_id`, not just its path.** If R2 regenerates
+`data/tasks/*.jsonl` in place, that is a different experiment and now gets a
+different run directory automatically.
+
+**Untracked files count as dirty.** An untracked module inside the package
+changes what a sweep does while leaving the recorded sha pointing at code that
+never ran.
+
+**Errors are retried on resume; refusals and truncations are not.** A timeout
+deserves another attempt. Retrying a real outcome until it changes selects for
+the lucky sample and biases the arm's accuracy upward.
+
+**Cost is a sidecar, not a column.** Re-characterizing on new hardware
+re-costs every existing rollout without regenerating a token — which is the
+thing the three-tier cost model is *for*. Two costings of one run coexist.
+
+### Open, and not mine to decide alone
+
+- **Do I generate on the test split?** I do today — R4 cannot evaluate rollouts
+  that do not exist, and I never see a grade, so nothing is "opened". Raising
+  it because my own don't-do list says the words. `--include-splits` restricts
+  it if the team disagrees.
+- **Seeds under a hosted backend.** `anthropic` has no seed parameter, so at
+  temperature 0 the three-seed ladder buys one distinct generation. The sweep
+  warns. If we run the pilot on a hosted API, use one seed or raise temperature.
+- **`graders/base.extract_code` is now redundant** — extraction is mine and R2
+  receives `code`. R2's call whether to drop it.
+
+---
+
+[README](./README.md) · [CONTRIBUTING](./CONTRIBUTING.md) · [ROADMAP](./ROADMAP.md) · [ROLES](./ROLES.md) · [bench](./bench/README.md)
