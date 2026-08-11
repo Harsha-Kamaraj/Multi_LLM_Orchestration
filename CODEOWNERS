@@ -2,12 +2,10 @@
 # A PR touching a path requires review from that path's owner.
 #
 # A handle here only functions if that account has write access to the repo.
-# TODO: @GURU-HANDLE is a placeholder — Guru (R1) is not yet a collaborator.
-#       Add Guru to the repo, then replace the placeholder with the real handle.
 
 # --- R1 · Serving & Workers · Guru ------------------------------------------
-/src/orchestrator/workers/     @GURU-HANDLE
-/bench/                        @GURU-HANDLE
+/src/orchestrator/workers/     @guru-bharadwaj20
+/bench/                        @guru-bharadwaj20
 
 # --- R2 · Verifier & Data · Diya --------------------------------------------
 /src/orchestrator/graders/     @Diya-R-Gowda
@@ -24,7 +22,7 @@
 # --- All-role approval ------------------------------------------------------
 # Destructive schema changes and CI config change everyone's ground truth.
 # (Additive optional fields are exempt — see CONTRIBUTING.md §Schema changes.)
-/schemas/rollout.schema.json   @GURU-HANDLE @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
-/schemas/task.schema.json      @GURU-HANDLE @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
-/.github/workflows/            @GURU-HANDLE @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
-/CODEOWNERS                    @GURU-HANDLE @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
+/schemas/rollout.schema.json   @guru-bharadwaj20 @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
+/schemas/task.schema.json      @guru-bharadwaj20 @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
+/.github/workflows/            @guru-bharadwaj20 @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
+/CODEOWNERS                    @guru-bharadwaj20 @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
