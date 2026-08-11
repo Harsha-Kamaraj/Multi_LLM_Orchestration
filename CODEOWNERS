@@ -1,0 +1,27 @@
+# Ownership is enforced here, not by convention.
+# A PR touching a path requires review from that path's owner.
+# Replace the placeholder handles before the first PR.
+
+# --- R1 · Serving & Workers -------------------------------------------------
+/src/orchestrator/workers/     @r1
+/bench/                        @r1
+
+# --- R2 · Verifier & Data ---------------------------------------------------
+/src/orchestrator/graders/     @r2
+/data/tasks/                   @r2
+
+# --- R3 · Policy & Learning -------------------------------------------------
+/src/orchestrator/policy/      @r3
+
+# --- R4 · Evaluation & Analysis ---------------------------------------------
+/eval/                         @r4
+/data/splits/                  @r4
+/schemas/                      @r4
+
+# --- All-role approval ------------------------------------------------------
+# Destructive schema changes and CI config change everyone's ground truth.
+# (Additive optional fields are exempt — see CONTRIBUTING.md §Schema changes.)
+/schemas/rollout.schema.json   @r1 @r2 @r3 @r4
+/schemas/task.schema.json      @r1 @r2 @r3 @r4
+/.github/workflows/            @r1 @r2 @r3 @r4
+/CODEOWNERS                    @r1 @r2 @r3 @r4
