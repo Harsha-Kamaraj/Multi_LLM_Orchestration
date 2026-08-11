@@ -132,9 +132,16 @@ class MockBackend(Backend):
             model_id=model,
             prefill_tokens=prefill,
             decode_tokens=decode,
-            # A plausible wall-clock so the cost model has something to fit.
+            # A plausible wall-clock so the cost model has something to fit:
+            # linear in tokens, plus deterministic jitter standing in for
+            # server-side variance. Without the jitter a fit against these
+            # rows would be exactly perfect, and a test that only ever sees
+            # R^2 = 1.0 cannot tell a working regression from a broken one.
             # Under `mode="sweep"` this is explicitly not a latency claim.
-            wall_ms=40.0 + prefill * 0.08 + decode * 6.0,
+            wall_ms=(
+                40.0 + prefill * 0.08 + decode * 6.0
+                + (_unit("wall", *ident) - 0.5) * 60.0
+            ),
             finish_reason="length" if truncated else "stop",
             mode=self.mode,
             batch_size=batch_size,
