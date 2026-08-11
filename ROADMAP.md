@@ -4,7 +4,9 @@ Ten weeks, four people, four phases with explicit gates. A phase does not start
 until the previous gate passes; a failed gate changes the plan rather than being
 retried indefinitely.
 
-Full rationale in the [design doc](./cost-aware-llm-orchestration-design.html).
+Full rationale lives in the design doc, which is distributed separately and is not
+tracked in this repo. Per-role breakdowns: [guru](./guru.md) · [diya](./diya.md) ·
+[harsha](./harsha.md) · [vivian](./vivian.md).
 
 ---
 

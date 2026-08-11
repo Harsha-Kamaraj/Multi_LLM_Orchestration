@@ -4,7 +4,17 @@ Four roles, cut so each owns a distinct resource and a distinct failure mode.
 Only R1 needs GPUs. Only R2 needs sandboxing. R3 and R4 need neither — which is
 what makes the split genuinely parallel rather than nominally parallel.
 
-Full rationale in the [design doc](./cost-aware-llm-orchestration-design.html).
+This file is the map. Each role also has its own working doc — rules, week-1
+checklist, and the failure modes specific to that seat:
+
+| Role | Owner | Doc |
+|---|---|---|
+| R1 Serving & Workers | Guru | [guru.md](./guru.md) |
+| R2 Verifier & Data | Diya | [diya.md](./diya.md) |
+| R3 Policy & Learning | Harsha | [harsha.md](./harsha.md) |
+| R4 Evaluation & Analysis | Vivian | [vivian.md](./vivian.md) |
+
+Full rationale lives in the design doc, distributed separately and not tracked here.
 
 ---
 
