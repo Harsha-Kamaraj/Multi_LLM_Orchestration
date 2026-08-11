@@ -75,42 +75,67 @@ class HFTokenizer:
 
 _CACHE: dict[str, Tokenizer] = {}
 
+# Set to "approx" to skip Hugging Face entirely. Useful on a host with no
+# weights and no wish to import torch, and in CI.
+_TOKENIZER_ENV = "ORCH_TOKENIZER"
 
-def get_tokenizer(model_id: str, *, allow_approx: bool = True) -> Tokenizer:
+
+def get_tokenizer(model_id: str, *, require_exact: bool = False,
+                  allow_hf: bool = True) -> Tokenizer:
     """Load the serving tokenizer for a model, cached per process.
 
-    Loading is deferred and cached because a sweep counts tokens for every
-    request and `transformers` is a heavy import that most of this package
-    does not need.
+    Two costs make this worth being careful about. Importing `transformers`
+    pulls in `torch`, which takes on the order of ten seconds; and
+    `from_pretrained` on an id the host has not cached will reach for the
+    Hugging Face hub, which on an air-gapped sweep box is a hang rather than an
+    error. So the lookup happens **at most once per model**, negative results
+    included, and only when the caller actually wants an exact count.
 
-    Set `allow_approx=False` anywhere an exact count is required — the
-    characterization pass does — so a missing tokenizer fails loudly instead of
-    quietly degrading the coefficients everything else is built on.
+    `require_exact=True` — which the characterization pass uses — makes a
+    missing tokenizer raise rather than silently degrade the coefficients that
+    every cost number in the project is built on.
     """
-    if model_id in _CACHE:
-        tok = _CACHE[model_id]
-        if tok.exact or allow_approx:
+    import os
+
+    cached = _CACHE.get(model_id)
+    if cached is not None and (cached.exact or not require_exact):
+        return cached
+
+    forced_approx = os.environ.get(_TOKENIZER_ENV, "").strip().lower() == "approx"
+    if forced_approx and require_exact:
+        raise RuntimeError(
+            f"{_TOKENIZER_ENV}=approx forces approximate counts, but an exact "
+            f"count was required for {model_id!r}. Unset it to characterize."
+        )
+
+    if allow_hf and not forced_approx:
+        try:
+            from transformers import AutoTokenizer  # type: ignore[import-not-found]
+
+            tok: Tokenizer = HFTokenizer(
+                tokenizer=AutoTokenizer.from_pretrained(model_id), name=model_id,
+            )
+            _CACHE[model_id] = tok
             return tok
+        except Exception as exc:  # noqa: BLE001 - any failure means "no tokenizer"
+            if require_exact:
+                raise RuntimeError(
+                    f"no exact tokenizer available for {model_id!r} and an exact "
+                    f"count was required; install `transformers` and make the "
+                    f"weights reachable, or characterize on a host that can load "
+                    f"them ({exc.__class__.__name__}: {exc})"
+                ) from exc
+    elif require_exact:
+        raise RuntimeError(
+            f"an exact tokenizer was required for {model_id!r} but the Hugging "
+            f"Face lookup was disabled by the caller"
+        )
 
-    try:
-        from transformers import AutoTokenizer  # type: ignore[import-not-found]
-
-        hf = AutoTokenizer.from_pretrained(model_id)
-        tok = HFTokenizer(tokenizer=hf, name=model_id)
-        _CACHE[model_id] = tok
-        return tok
-    except Exception as exc:  # noqa: BLE001 - any failure here means "no tokenizer"
-        if not allow_approx:
-            raise RuntimeError(
-                f"no exact tokenizer available for {model_id!r} and an exact count "
-                f"was required; install `transformers` and make the weights "
-                f"reachable, or characterize on a host that can load them "
-                f"({exc.__class__.__name__}: {exc})"
-            ) from exc
-
-    tok = ApproxTokenizer()
-    _CACHE[model_id] = tok
-    return tok
+    # Cached including the failure, so a sweep of ten thousand cells pays the
+    # import cost once rather than once per request.
+    approx = ApproxTokenizer()
+    _CACHE[model_id] = approx
+    return approx
 
 
 def clear_cache() -> None:
