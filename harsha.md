@@ -66,6 +66,32 @@ the one who finds out.
 
 ---
 
+## You are measured against a heuristic, and you don't build it
+
+R4 owns a `heuristic_route` baseline: hand-specified prompt-only rules with
+thresholds tuned on validation and swept across λ. It sits directly below
+`learned_D0` on the capacity ladder, with the **same information** and far fewer
+free parameters.
+
+| Rung | Free parameters | Information |
+|---|---|---|
+| `heuristic_route` (R4) | 1–2 thresholds | prompt only |
+| `learned_D0` (you) | dozens | prompt only |
+| `learned_D1` (you) | dozens | prompt + code + visible tests |
+
+That adjacency is the point: `heuristic_route → learned_D0` isolates whether
+**learning** adds anything over human priors, with information held constant.
+
+**Do not build it, and do not tune it.** Same reasoning as the test split — the
+person whose policy is being compared shouldn't control its competition. If it beats
+you, that's a real result and it gets reported as one.
+
+What it does mean for you: **`learned_D0` has to justify dozens of parameters
+against two.** If your D0 model only ties a prompt-length threshold, say so plainly
+rather than adding features until it wins.
+
+---
+
 ## Leakage — you will do this accidentally
 
 Every feature must be **computable at the decision point it claims to serve.**
@@ -160,6 +186,7 @@ stronger result than a complicated one that can't be attributed.
 - Fit anything, including normalization constants, on test
 - Use a hidden-test outcome as a feature, directly or transitively
 - Bake λ into training
+- Build or tune `heuristic_route` — that's R4's, by design
 - Report an uncalibrated probability
 
 ---
