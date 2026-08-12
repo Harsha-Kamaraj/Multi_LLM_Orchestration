@@ -44,19 +44,80 @@ failure beats predicting it. **Any framing that omits it is dishonest.** A routi
 policy that beats `always_small` and `always_large` but loses to the cascade has
 demonstrated nothing.
 
-All six, all required:
+All seven, all required:
 
 | Baseline | Why it's in the set |
 |---|---|
 | `always_small` | Cost floor |
 | `always_large` | Accuracy ceiling for a single arm |
 | `random_route(p)` | Controls for "any routing at all helps" |
+| `heuristic_route` | Controls for "learning helps" — see below |
 | `best_of_n_small` | Controls for "more samples helps" — matched cost |
 | `verifier_gated_cascade` | **The one to beat** |
 | `oracle_router` | Headroom; the gap that's theoretically available |
 
 Compare **at matched cost**, on the frontier. A win at a different price point is
 not a win.
+
+---
+
+## `heuristic_route` — the ablation of learning
+
+This is yours, and it is the baseline that answers the question an interviewer asks
+first: *"couldn't you have just used prompt length?"*
+
+Arrange the set as a **capacity ladder** and each rung isolates one variable:
+
+| Rung | Free parameters | Information |
+|---|---|---|
+| `random_route(p)` | 0 | none |
+| `heuristic_route` | 1–2 thresholds | prompt only |
+| `learned_D0` | dozens | prompt only |
+| `learned_D1` | dozens | prompt + code + visible tests |
+
+Two adjacent comparisons carry the result:
+
+- `heuristic_route` → `learned_D0` isolates **learning**, information held constant
+- `learned_D0` → `learned_D1` isolates **information**, learning held constant
+
+### Tune it as hard as you tune the policy
+
+This is the whole ballgame. An untuned heuristic compared against a tuned model is
+not a baseline, it's a strawman — and it's the most common way "we compared against
+baselines" quietly becomes dishonest.
+
+- Fit thresholds on the **validation split** — the same split the policy uses
+- **Sweep across λ to produce a frontier**, never a single point. A curve compared
+  to a dot is not a comparison
+- Try several heuristic families, report the **best**, not the first
+
+**If the tuned heuristic beats the learned policy, that is the finding.** The policy
+didn't earn its complexity. Report it as the headline — you are the only person on
+this team positioned to say it.
+
+### Keep it a heuristic
+
+Hand-specified rules with tuned thresholds. **Not** a fitted model over prompt
+features — the moment you fit logistic regression on prompt signals you have
+rebuilt `learned_D0` and the comparison collapses to noise.
+
+Candidate signals, all prompt-only, all cheap:
+
+- prompt token count
+- number of visible test cases
+- nested-structure and loop-keyword counts in the signature and docstring
+- algorithmic keywords: `graph`, `optimize`, `dynamic`, `recursive`
+
+> **Trap:** never use a dataset-provided difficulty label that was derived from model
+> pass rates. That is leakage in disguise, and it makes the heuristic look
+> artificially strong.
+
+This costs no GPU time — it is a pure function over the rollout store you already
+have. It is also a new family in the comparison set, so it enters the
+Benjamini–Hochberg correction alongside the λ sweep.
+
+> Closest published reference is **RouteLLM** (LMSYS, 2024). Don't cite anything you
+> can't describe precisely.
 
 ---
 
@@ -143,7 +204,7 @@ An evaluation harness that has never been run against a known answer is not vali
 
 - [ ] Own the `schemas/` freeze — day 3, all four sign off
 - [ ] Power analysis off measured discordance → the corpus size everyone commits to
-- [ ] All six baselines implemented against fixtures
+- [ ] All seven baselines implemented against fixtures, including `heuristic_route`
 - [ ] Cluster bootstrap + McNemar, validated on the planted signal
 - [ ] Oracle-gap study on the pilot
 - [ ] Leakage audit tooling — independent of R3's feature code
@@ -175,6 +236,8 @@ positioned to say it.
 - Bootstrap over rows instead of clustering on tasks and seeds
 - Compare at unmatched cost
 - Drop `verifier_gated_cascade` from the baseline set
+- Ship `heuristic_route` untuned, or as a single point instead of a frontier
+- Let R3 build the baseline their own policy is measured against
 - Publish from a `-dirty` run
 
 ---
