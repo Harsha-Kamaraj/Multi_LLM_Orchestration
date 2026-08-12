@@ -1,8 +1,8 @@
 # Cost-Aware LLM Orchestration
 
 A learned policy decides **which model to spend on** — answer directly with a small
-model, escalate to a large one, retry with repair, or decompose — optimizing a
-tradeoff between accuracy, compute cost, and latency.
+model, escalate to a large one, or retry with repair — optimizing a tradeoff
+between accuracy, compute cost, and latency.
 
 Correctness is decided by **executing unit tests in a sandbox**, never by asking
 another model. Every reported number carries a confidence interval and is
@@ -31,6 +31,36 @@ The central empirical question is where in the pipeline the signal actually live
 That asymmetry is the most important number in the project, and it drives the
 architecture. If `AUC_D1 < 0.75`, the premise is false and we stop — that gate is
 in [ROADMAP.md](./ROADMAP.md).
+
+---
+
+## The comparison
+
+Seven baselines, arranged as a **capacity ladder**. Each rung varies exactly one
+thing from the rung above it, so a gap between two rows attributes to a cause
+rather than to "the whole system got better".
+
+| Baseline | Free parameters | Information | Isolates |
+|---|---|---|---|
+| `always_small` | — | — | Cost floor |
+| `always_large` | — | — | Single-arm accuracy ceiling |
+| `random_route(p)` | 0 | none | Does routing at all help? |
+| `heuristic_route` | 1–2 thresholds | prompt only | **Does learning beat human priors?** |
+| `learned_D0` | dozens | prompt only | |
+| `learned_D1` | dozens | prompt + code + visible tests | **Does observing beat predicting?** |
+| `best_of_n_small` | — | — | Controls for "more samples helps", matched cost |
+| `verifier_gated_cascade` | 0 | visible-test outcome | **The one to beat** |
+| `oracle_router` | — | everything | Headroom available in principle |
+
+Two adjacent comparisons carry most of the result:
+
+- `heuristic_route` → `learned_D0` — **learning**, information held constant
+- `learned_D0` → `learned_D1` — **information**, learning held constant
+
+`heuristic_route` is tuned as hard as the policy is: thresholds fit on validation,
+swept across λ to produce a frontier rather than a point. A baseline tuned less than
+the method is a strawman, not a baseline. **If the tuned heuristic wins, that is the
+finding** — the learned policy did not earn its complexity, and the report says so.
 
 ---
 
@@ -135,12 +165,62 @@ your first commit, not after it rejects you.
 
 ---
 
+## Hardware and the shape it forces
+
+**2× RTX 4090, 24 GB each. Nothing always-on, nothing distributed.**
+
+These are consumer cards: **no NVLink, P2P disabled.** Tensor parallelism across
+them over PCIe is slow and fragile, so the hard rule is **every model fits on one
+card**. That single constraint picks the models.
+
+| Model | bf16 weights | One 4090? |
+|---|---|---|
+| Qwen2.5-Coder-1.5B — **small arm** | ~3.1 GB | yes |
+| Qwen2.5-Coder-7B — **large arm** | ~15.2 GB | yes, ~8 GB left for KV |
+| Qwen2.5-Coder-14B | ~29.4 GB | no — would need AWQ |
+| Qwen2.5-Coder-32B | ~65.6 GB | no — AWQ ~19 GB, tight |
+
+**Both arms are bf16 on purpose.** Quantizing only the large arm would confound
+model scale with quantization damage, and the measured accuracy gap would no longer
+mean what the report claims it means. The 1.5B/7B gap is ~20pp on HumanEval+,
+comfortably past the 8pp gate.
+
+The second card buys **throughput, not size**: the small arm sweeps on GPU0 while
+the large arm sweeps on GPU1 — two independent single-GPU vLLM processes, no
+coordination, roughly half the wall-time.
+
+### Why nothing needs to be always-on
+
+The architecture is **log once, replay many times**. Rollouts are swept ahead of
+time; every policy, baseline, and λ afterward is arithmetic over Parquet on CPU.
+No two models are ever resident together, and no comparison requires a live server.
+
+The hardware constraint and the design agree — that isn't a workaround, it's why
+the frontier can be swept at decision time instead of retrained.
+
+**Latency is therefore two numbers, never one:**
+
+- `warm_latency_s` — steady state, model resident, batch=1. What the policy
+  optimizes and what a deployment actually sees.
+- `cold_start_s` — vLLM startup, 30–90 s. Measured once per model, reported
+  separately, and **excluded from the routing objective** because any real
+  deployment amortizes it.
+
+One vLLM process per model **per sweep** — never per task.
+
+---
+
 ## Stack
 
-Qwen2.5-Coder on **vLLM** · Docker sandbox · scikit-learn + LightGBM (CPU) ·
-Parquet + DuckDB · SciPy / statsmodels · Hydra + Justfile
+Qwen2.5-Coder (1.5B / 7B) on **vLLM** · Docker sandbox · scikit-learn + LightGBM
+(CPU) · Parquet + DuckDB · SciPy / statsmodels · Hydra + Justfile
 
 Deliberately **not** used: LangChain, LangGraph, CrewAI, AutoGen, a vector DB, or
 an RL framework. The policy chooses among a handful of arms using a few dozen
 features over ~1,000 tasks. A tabular model is the right tool until a measured gap
 says otherwise.
+
+**Explicit non-goals:** a `decompose` arm (needs a multi-step corpus we don't have,
+and it's the fragile multi-agent pipeline this project exists to avoid), an online
+router, and live A/B serving. Every result is offline replay — which is how routing
+research is normally done, and is stated up front rather than discovered later.
