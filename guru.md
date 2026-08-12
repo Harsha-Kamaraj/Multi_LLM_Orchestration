@@ -18,6 +18,54 @@ owning a GPU.
 
 ---
 
+## Your hardware, and what it decides for you
+
+**2× RTX 4090, 24 GB each. Nothing always-on.**
+
+These are consumer cards — **no NVLink, P2P disabled.** Tensor parallelism across
+them over PCIe is slow and adds a failure mode you would spend days debugging
+instead of building the project. So:
+
+> **Hard rule: every model fits on one card. TP=1, always.**
+
+That rule picks the models:
+
+| Model | bf16 weights | One 4090? |
+|---|---|---|
+| Qwen2.5-Coder-1.5B — **small arm** | ~3.1 GB | yes |
+| Qwen2.5-Coder-7B — **large arm** | ~15.2 GB | yes, ~8 GB for KV |
+| Qwen2.5-Coder-14B | ~29.4 GB | no — AWQ only |
+| Qwen2.5-Coder-32B | ~65.6 GB | no — AWQ ~19 GB, tight |
+
+**Both arms are bf16, deliberately.** Quantizing only the large arm confounds model
+scale with quantization damage, and every accuracy-gap number in the report stops
+meaning what it claims. If you ever need a bigger large-arm, quantize *both* or
+quantize neither.
+
+**The second card buys throughput, not size.** Small arm sweeps on GPU0, large arm
+sweeps on GPU1 — two independent single-GPU vLLM processes, no coordination between
+them, roughly half the wall-time. Set `CUDA_VISIBLE_DEVICES` per process and let
+them run.
+
+---
+
+## Session-based execution
+
+Nothing runs always-on. That is a constraint, and it has exactly one operational
+consequence you must not get wrong:
+
+> **One vLLM process per model, per sweep. Never per task.**
+
+vLLM startup — weight load plus CUDA graph capture — is 30–90 s. Paying that per
+task would make a sweep 50× longer and the latency numbers meaningless. Load once,
+sweep the entire arm, tear down, load the next.
+
+This is also why the whole project works on your hardware: **log once, replay many
+times** means no two models are ever resident simultaneously and nothing downstream
+needs a live server.
+
+---
+
 ## The one distinction that defines this role
 
 **Sweeps and serving are different modes. Never conflate them.**
@@ -35,6 +83,23 @@ latency, every latency number in the project is wrong and the error is invisible
 it looks like plausible data.
 
 Log `wall_ms` anyway. It's a useful sanity signal. It is **not** the reported metric.
+
+---
+
+## Latency is two numbers, never one
+
+Because nothing is always-on, "latency" is ambiguous unless you split it. You own
+both halves:
+
+| Metric | What it is | Where it goes |
+|---|---|---|
+| `warm_latency_s` | Steady state, model resident, batch=1 | The routing objective — what the policy optimizes |
+| `cold_start_s` | vLLM startup, 30–90 s, measured once per model | Reported **separately**, excluded from the objective |
+
+Cold start is excluded on purpose, and you should be able to say why: any real
+deployment amortizes it across many requests, so folding it into per-task latency
+would make both arms look identical and hide the actual routing tradeoff. Report it
+as a fixed deployment cost instead of burying it.
 
 ---
 
@@ -88,13 +153,15 @@ means prompt format is entirely your business.
 
 - [ ] Sign off on `schemas/` by day 3 — this is a hard serialization point
 - [x] Sweep runner, rollout store, resume, cost model — built and tested end to end
-- [ ] vLLM up, both models loading, `LLM.generate` producing schema-valid rows
+- [ ] vLLM up at TP=1, 1.5B on GPU0 and 7B on GPU1, schema-valid rows out
 - [ ] 200-task pilot sweep: small ×3 seeds, large ×3 seeds, handed to R2 for grading
       — **blocked on R2's task manifest**, which is my only cross-role dependency
 - [ ] First characterization pass → `cost_coefficients.json` — blocked on GPU access
+- [ ] Measure `cold_start_s` for both models — one number each, reported separately
 
-Your Phase 0 number is `A_large − A_small ≥ 8pp`. If the arms aren't differentiated,
-**shrink the small model** — that's the fix, and it's yours to make.
+Your Phase 0 number is `A_large − A_small ≥ 8pp`. Expect ~20pp from 1.5B vs 7B. If
+the arms aren't differentiated, **shrink the small model** — drop to 0.5B before you
+reach for a bigger large-arm, because growing the large arm costs you TP=1.
 
 ---
 
@@ -141,6 +208,10 @@ estimate. Every cost number downstream is built on it.
 ## What you must not do
 
 - Report sweep wall-clock as latency
+- Reach for tensor parallelism across the two 4090s
+- Quantize one arm and not the other
+- Load a model per task instead of per sweep
+- Fold `cold_start_s` into per-task latency
 - Change a prompt template without changing `params_hash`
 - Mutate a row in the rollout store
 - Grade anything — that's R2's, and the separation is what makes grading trustworthy
