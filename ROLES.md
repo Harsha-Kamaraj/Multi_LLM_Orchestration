@@ -120,7 +120,7 @@ def decide(x, lam):
 **The referee.** `eval/`
 
 Responsibilities
-- All six baselines
+- All seven baselines, including the tuned `heuristic_route` ablation
 - All statistics — cluster bootstrap, McNemar, BH correction, power analysis
 - The failure taxonomy and the router confusion matrix
 - The leakage audit

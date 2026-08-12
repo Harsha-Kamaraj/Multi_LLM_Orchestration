@@ -43,17 +43,22 @@ The minimum system that produces a defensible result. Nothing outside this list 
 
 **Deliverables**
 
-- Two worker models on vLLM + characterization pass producing cost/latency coefficients
+- Qwen2.5-Coder-1.5B on GPU0 and 7B on GPU1, **TP=1 both**, plus a characterization
+  pass producing cost coefficients, `warm_latency_s`, and `cold_start_s`
 - 1,000 tasks from MBPP+ / HumanEval+, split 60/20/20 at task level, manifest hashed and committed
 - Frozen-ladder sweep: 6 generations per task (small ×3, large ×3), all graded, all logged to Parquet
 - Calibrated `P(pass | x, arm)` at D0 and D1, plus cost and latency regressors
 - λ-sweep producing the cost–accuracy frontier
-- Six baselines: `always_small`, `always_large`, `random_route(p)`, `best_of_n_small`,
-  `verifier_gated_cascade`, `oracle_router`
+- Seven baselines: `always_small`, `always_large`, `random_route(p)`, **`heuristic_route`**,
+  `best_of_n_small`, `verifier_gated_cascade`, `oracle_router`
 - Paired bootstrap CIs and McNemar tests on the frozen test split, opened exactly once
 
 **Gate:** policy beats `verifier_gated_cascade` on at least one frontier region,
 with a confidence interval excluding zero.
+
+**Second gate, equally binding:** `learned_D0` beats a *properly tuned*
+`heuristic_route` on the same region. If it doesn't, the learned policy hasn't
+earned its complexity at D0 — report that, and let D1 carry the result.
 
 ---
 
@@ -71,27 +76,33 @@ with a confidence interval excluding zero.
 
 ---
 
-## Phase 3 — Hardening & online · Weeks 8–10
+## Phase 3 — Hardening & replication · Weeks 8–10
 
 **Deliverables**
 
 - LiveCodeBench post-cutoff replication (contamination-controlled split)
-- Online router + shadow A/B harness
-- Ablations: feature groups, calibration on/off, ladder depth
-- `decompose` arm — **only if** a multi-step dataset (SWE-bench-lite or similar) landed
+- Ablations: feature groups, calibration on/off, ladder depth, heuristic families
+- Session-based demo CLI — load, serve a handful of requests, unload
+- Final report
 
 **Gate:** the result replicates on the contamination-controlled split. If the routing
 win exists only on the contaminated split, that is the actual finding — report it.
 
 ---
 
-## Phase 4 — Optional
+## Explicit non-goals
 
-Three-rung cascade · LinUCB online exploration · GRPO policy LM · full sequential MDP.
+Cut deliberately, and each is defensible in one sentence:
 
-**Gate:** only with a measured gap the tabular policy demonstrably cannot close.
-Using 7B parameters to choose among three arms is the wrong tool until the numbers
-say otherwise.
+| Cut | Why |
+|---|---|
+| `decompose` arm | Needs a multi-step corpus we don't have, and it is the fragile multi-agent pipeline this project exists to avoid |
+| Online router + shadow A/B | Requires two models resident and warm; violates the on-demand constraint |
+| LinUCB / online exploration | Same residency problem, plus it needs live traffic we don't have |
+| Fine-tuned policy LM, GRPO, full MDP | Using billions of parameters to choose among three arms, before the tabular policy has been shown to fail |
+
+The honest limitation to state up front: **every result is offline replay.** That is
+how routing research is normally done, and saying it first is better than being asked.
 
 ---
 
