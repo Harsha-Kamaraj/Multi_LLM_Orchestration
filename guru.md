@@ -149,19 +149,65 @@ means prompt format is entirely your business.
 
 ---
 
-## Week 1 (Phase 0)
+## Status — 12 Aug 2026
 
-- [ ] Sign off on `schemas/` by day 3 — this is a hard serialization point
-- [x] Sweep runner, rollout store, resume, cost model — built and tested end to end
-- [ ] vLLM up at TP=1, 1.5B on GPU0 and 7B on GPU1, schema-valid rows out
-- [ ] 200-task pilot sweep: small ×3 seeds, large ×3 seeds, handed to R2 for grading
-      — **blocked on R2's task manifest**, which is my only cross-role dependency
-- [ ] First characterization pass → `cost_coefficients.json` — blocked on GPU access
-- [ ] Measure `cold_start_s` for both models — one number each, reported separately
+**Every line of code R1 owes is written and tested. Not one of it has touched a
+GPU.** That is the whole summary, and the tables below are the unflattering
+version of it. The distinction matters: a tested code path is not a measurement,
+and none of my numbers exist yet.
 
-Your Phase 0 number is `A_large − A_small ≥ 8pp`. Expect ~20pp from 1.5B vs 7B. If
-the arms aren't differentiated, **shrink the small model** — drop to 0.5B before you
-reach for a bigger large-arm, because growing the large arm costs you TP=1.
+### Week 1 (Phase 0)
+
+| # | Assigned | Done | Where it actually stands |
+|---|---|---|---|
+| 1 | Sign off on `schemas/` by day 3 | ❌ | **No `schemas/` package exists in the repo at all.** Not mine alone to fix, but it is *the* hard serialization point and it has slipped past day 3. I build against my own `types.py` and the rollout projection in `generation.py` — which means my row shape is unratified. |
+| 2 | Sweep runner, rollout store, resume, cost model | ✅ | End to end, 270 tests green in ~80 s, no GPU and no network |
+| 3 | vLLM at TP=1, 1.5B on GPU0 / 7B on GPU1 | ❌ | `vllm_offline` and `vllm_openai` backends are written and exercised against `mock`. Neither has been pointed at a real vLLM process. |
+| 4 | 200-task pilot sweep → R2 for grading | ❌ | **Blocked on R2's task manifest** — no `data/tasks/*.jsonl` exists. `corpus.py` reads it the moment it lands; this is my only cross-role dependency and it is still open. |
+| 5 | First characterization pass → `cost_coefficients.json` | ❌ | `characterize.py` and the coefficient fit are written and tested. There is no `bench/cost_coefficients.json`. The coefficients do not exist. |
+| 6 | Measure `cold_start_s` for both models | ❌ | Needs a real vLLM startup to time. Nothing to report. |
+
+### Standing responsibilities (ROLES.md)
+
+Split into two columns on purpose — collapsing them is how "built" gets read as
+"working".
+
+| Responsibility | Built | Measured on real hardware |
+|---|---|---|
+| vLLM offline batch sweeps | ✅ | ❌ |
+| vLLM OpenAI server for characterization | ✅ | ❌ |
+| Arm implementations | ✅ | ❌ |
+| Prompt templates, versioned and hashed | ✅ | ❌ |
+| Resumable one-command sweep runner | ✅ | ❌ |
+| Cost/latency characterization pass | ✅ | ❌ |
+| Code extraction (mine, not R2's) | ✅ | ❌ |
+
+Seven arms are registered, not two: `direct_small` / `direct_large`, their
+`_notests` variants, `probe_small`, and `repair_small` / `repair_large`. The
+last three are Phase 2 deliverables built early — they cost nothing to carry and
+they stop the arm registry being reshaped mid-project.
+
+### Definition of done
+
+| Clause | Done | |
+|---|---|---|
+| A sweep is one command | ✅ | `orch-workers sweep` |
+| It is resumable | ✅ | Keyed on `(task_id, arm, seed, params_hash)`, tested |
+| Imputed latency correlates with wall-clock at **R² > 0.9** | ❌ | The check is implemented — `orch-workers validate`, non-zero exit below 0.9. It has never run against real data, so the R² is not low, it is **absent**. |
+
+R1 is not done. Two of three clauses are code properties I can prove today; the
+third is a measurement, and it is the one the rest of the project leans on.
+
+### What unblocks what
+
+Nothing downstream of me is waiting on code. R2's manifest and GPU access are
+the only two things between here and rows 3–6 flipping, and neither is mine to
+schedule. If both landed tomorrow the pilot sweep is a day's work, because the
+pipeline it runs through has been tested on every commit since it was written.
+
+Phase 0's number is `A_large − A_small ≥ 8pp`. Expect ~20pp from 1.5B vs 7B. If
+the arms aren't differentiated, **shrink the small model** — drop to 0.5B before
+you reach for a bigger large-arm, because growing the large arm costs you TP=1.
 
 ---
 
@@ -242,8 +288,8 @@ estimate. Every cost number downstream is built on it.
 | `impute.py` | Cost sidecars — re-costing never rewrites a row |
 | `cli.py` | `orch-workers` |
 
-270 tests in `bench/tests`, no GPU and no network, a few seconds. The pipeline
-is exercised end to end on every commit rather than when someone remembers.
+270 tests in `bench/tests`, no GPU and no network, ~80 s. The pipeline is
+exercised end to end on every commit rather than when someone remembers.
 
 ### Decisions worth arguing with
 
