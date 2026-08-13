@@ -134,15 +134,17 @@ def test_a_real_corpus_produces_no_proxy_column(tmp_path: Path, fx):
     assert all("task_prompt" in row for row in data.rows)
 
 
-def test_prompt_length_tracks_the_proxy(loaded):
+def test_prompt_length_tracks_the_proxy_inversely(loaded):
     """So a genuine prompt-length feature is a valid D0 signal on the fixture.
 
-    This is what makes Phase 3's feature builders exercisable end to end
-    instead of being handed the planted answer under another name.
+    Negative by design: `x_d0` is oriented so higher means more likely to
+    solve, and a longer prompt means a harder task. Planting the relationship
+    in the other direction would validate a feature builder against a sign the
+    real store does not have.
     """
     lengths = np.array([len(row["task_prompt"].split()) for row in loaded.rows])
     proxy = np.array([row["task_x_d0"] for row in loaded.rows])
-    assert np.corrcoef(lengths, proxy)[0, 1] > 0.99
+    assert np.corrcoef(lengths, proxy)[0, 1] < -0.99
 
 
 # -- the deliverable ---------------------------------------------------------
@@ -187,7 +189,8 @@ def test_prompt_length_alone_recovers_the_signal(loaded):
     lengths = np.array([len(row["task_prompt"].split()) for row in small])
     solved = np.array([loaded.label_for(row["rollout_id"]).solved
                        for row in small])
-    assert _auc(lengths, solved) > 0.60
+    # Negated because a longer prompt means a harder task.
+    assert _auc(-lengths, solved) > 0.60
 
 
 def test_the_large_arm_solves_a_correlated_superset(loaded):

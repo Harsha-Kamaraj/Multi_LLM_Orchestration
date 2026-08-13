@@ -94,14 +94,25 @@ class Fixture:
 
 
 def _prompt_for(x_d0: float, lo: float, hi: float, task_id: str) -> str:
-    """Prose whose length encodes the D0 proxy.
+    """Prose whose length encodes the D0 proxy, **inversely**.
 
     Monotone in `x_d0` by construction, so a prompt-length feature is a valid
     D0 signal on this fixture in the same way it is on a real corpus — without
     the feature builder knowing the fixture exists.
+
+    The sign matters and is chosen deliberately. `x_d0` is oriented so that
+    higher means *more likely to solve*; a longer prompt, in a real corpus,
+    means a *harder* task. Mapping length directly onto `x_d0` would therefore
+    plant a relationship whose direction is backwards from the one a real store
+    has, and a feature builder validated against it would carry that inversion
+    into week 4 — where the fix looks like flipping a sign, which is fitting
+    the label rather than the feature.
+
+    So length runs against the proxy: high `x_d0` (easy) produces a short
+    prompt.
     """
     span = (hi - lo) or 1.0
-    scaled = (x_d0 - lo) / span
+    scaled = 1.0 - (x_d0 - lo) / span
     n_words = _MIN_PROMPT_WORDS + int(round(scaled * _PROMPT_WORD_SPAN))
     words = [(_FILLER[i % len(_FILLER)]) for i in range(n_words)]
     return f"Implement the routine described for {task_id}: " + " ".join(words) + "."
