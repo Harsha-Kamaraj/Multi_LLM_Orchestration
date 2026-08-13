@@ -75,6 +75,16 @@ class StoreReadError(PolicyError):
     """
 
 
+class StoreIntegrityError(StoreReadError):
+    """The run is readable but corrupt in a way that would produce a number.
+
+    Distinct from `StoreReadError` because the store is not malformed — every
+    row parses, every column is the right type, and every statistic over it
+    would compute. That is exactly what makes these worth refusing: the failure
+    mode is a believable result, not an exception.
+    """
+
+
 class UngradedRunError(StoreReadError):
     """The run has generations but no grades, so it carries no labels.
 

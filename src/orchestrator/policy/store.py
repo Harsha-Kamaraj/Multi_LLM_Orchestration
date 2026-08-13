@@ -46,8 +46,10 @@ from typing import Any, Iterator, Mapping, Sequence
 from schemas.validate import rollout_schema
 
 from ..workers.store import MANIFEST_NAME, PARQUET_NAME, ROWS_DIR
-from . import contract
-from .errors import SplitError, StoreReadError, UngradedRunError
+from . import contract, integrity
+from .errors import (
+    SplitError, StoreIntegrityError, StoreReadError, UngradedRunError,
+)
 
 #: Where R1's imputation pass writes cost sidecars, one per coefficient set.
 COST_DIR = "cost"
@@ -376,6 +378,8 @@ def load_rollouts(root: Path | str, run_id: str, *,
                   cost_fingerprint: str | None = None,
                   tasks_path: Path | str | None = None,
                   require_grades: bool = True,
+                  check_integrity: bool = True,
+                  skip_checks: Sequence[str] = (),
                   prefer_parquet: bool = True) -> RolloutData:
     """Load one pinned run as features and labels.
 
@@ -389,6 +393,10 @@ def load_rollouts(root: Path | str, run_id: str, *,
             cannot be built, because the rollout row carries no prompt.
         require_grades: refuse a run R2 has not graded. Leave this on unless
             you are inspecting a sweep rather than training on one.
+        check_integrity: run the corruption checks that produce plausible
+            numbers rather than exceptions. Turning this off is for inspecting
+            a store you already know is broken, never for starting a fit.
+        skip_checks: omit named checks by slug, same caveat.
     """
     wanted_splits = _check_splits(splits)
     manifest = read_manifest(root, run_id)
@@ -402,18 +410,40 @@ def load_rollouts(root: Path | str, run_id: str, *,
     task_features = (read_task_features(tasks_path)
                      if tasks_path is not None else {})
 
+    # Pass one: read and normalize everything, including the splits R3 may not
+    # train on. Integrity has to see the whole store — a task leaking across
+    # train and test is invisible from the train rows alone, and those are the
+    # only ones that survive the filter below.
+    all_rows: list[dict[str, Any]] = []
+    seen_versions: set[int] = set()
+    for where, raw in reader(root, run_id):
+        row = contract.normalize_row(raw, where=where)
+        seen_versions.add(int(row["schema_version"]))
+        all_rows.append(row)
+
+    if len(seen_versions) > 1:
+        from .errors import SchemaVersionError
+        raise SchemaVersionError(
+            f"run {run_id} mixes schema versions {sorted(seen_versions)}. A "
+            f"mixed-version store must be detectable, never silently averaged: "
+            f"two rows whose columns mean different things are two experiments."
+        )
+
+    if check_integrity:
+        issues = integrity.check_integrity(all_rows, skip=skip_checks)
+        if issues:
+            raise StoreIntegrityError(
+                integrity.format_issues(issues, run_id=run_id)
+            )
+
+    # Pass two: select, label, strip, join.
     rows: list[dict[str, Any]] = []
     labels: dict[str, Label] = {}
     latent: dict[str, dict[str, Any]] = {}
-    seen_versions: set[int] = set()
-    n_total = 0
+    n_total = len(all_rows)
     n_ungraded = 0
 
-    for where, raw in reader(root, run_id):
-        n_total += 1
-        row = contract.normalize_row(raw, where=where)
-        seen_versions.add(int(row["schema_version"]))
-
+    for row in all_rows:
         if str(row.get("split") or "") not in wanted_splits:
             continue
 
@@ -458,28 +488,20 @@ def load_rollouts(root: Path | str, run_id: str, *,
             joined = task_features.get(str(row["task_id"]))
             if joined is None:
                 raise StoreReadError(
-                    f"{where}: task {row['task_id']!r} is in the run but not in "
-                    f"the manifest at {tasks_path}. The corpus does not match "
-                    f"the run — a sweep folds a corpus fingerprint into its "
-                    f"run_id precisely so this mismatch is visible."
+                    f"run {run_id}: task {row['task_id']!r} is in the run but "
+                    f"not in the manifest at {tasks_path}. The corpus does not "
+                    f"match the run — a sweep folds a corpus fingerprint into "
+                    f"its run_id precisely so this mismatch is visible."
                 )
             row.update(joined)
 
         rows.append(row)
 
-    if len(seen_versions) > 1:
-        from .errors import SchemaVersionError
-        raise SchemaVersionError(
-            f"run {run_id} mixes schema versions {sorted(seen_versions)}. A "
-            f"mixed-version store must be detectable, never silently averaged: "
-            f"two rows whose columns mean different things are two experiments."
-        )
-
     if not rows:
+        present = sorted({str(r.get("split") or "") for r in all_rows})
         raise StoreReadError(
             f"run {run_id} has {n_total} rows but none in splits "
-            f"{sorted(wanted_splits)}. Splits present: "
-            f"{sorted({str(r.get('split') or '') for _, r in reader(root, run_id)})}"
+            f"{sorted(wanted_splits)}. Splits present: {present}"
         )
 
     if require_grades and n_ungraded:
