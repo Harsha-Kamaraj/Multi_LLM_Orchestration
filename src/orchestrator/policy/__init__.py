@@ -39,6 +39,14 @@ __all__ = [
     # synthetic fixtures
     "Fixture",
     "write_fixture",
+    # features
+    "Feature",
+    "FeatureError",
+    "FeatureMatrix",
+    "FeatureSet",
+    "Standardizer",
+    "feature_set",
+    "fit_standardizer",
     # the row contract
     "SUPPORTED_SCHEMA_VERSIONS",
     "D0_OBSERVABLE",
@@ -77,6 +85,15 @@ from .errors import (
     StoreIntegrityError,
     StoreReadError,
     UngradedRunError,
+)
+from .features import (
+    Feature,
+    FeatureError,
+    FeatureMatrix,
+    FeatureSet,
+    Standardizer,
+    feature_set,
+    fit_standardizer,
 )
 from .fixtures import Fixture, write_fixture
 from .integrity import IntegrityIssue, check_integrity
