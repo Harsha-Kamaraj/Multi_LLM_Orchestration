@@ -47,6 +47,13 @@ __all__ = [
     "Standardizer",
     "feature_set",
     "fit_standardizer",
+    # the phase 0 gate
+    "GateResult",
+    "THRESHOLDS",
+    "auc",
+    "gate_report",
+    "measure_gate",
+    "measure_gates",
     # the row contract
     "SUPPORTED_SCHEMA_VERSIONS",
     "D0_OBSERVABLE",
@@ -96,6 +103,14 @@ from .features import (
     fit_standardizer,
 )
 from .fixtures import Fixture, write_fixture
+from .gate import (
+    THRESHOLDS,
+    GateResult,
+    auc,
+    gate_report,
+    measure_gate,
+    measure_gates,
+)
 from .integrity import IntegrityIssue, check_integrity
 from .store import (
     Label,
