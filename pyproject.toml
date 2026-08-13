@@ -16,6 +16,10 @@ workers = ["vllm>=0.6", "transformers>=4.44"]
 # Parquet is what R3 and R4 read. JSONL stays authoritative, so a sweep host
 # missing pyarrow still produces a complete, readable run.
 store = ["pyarrow>=16.0"]
+# R2's corpus ingestion only. Not a runtime dependency of grading itself —
+# `orch corpus build` needs it once to fetch HumanEval+/MBPP+; grading a
+# task never does.
+data = ["evalplus>=0.3.1"]
 
 [project.scripts]
 orch = "orchestrator.cli:main"
