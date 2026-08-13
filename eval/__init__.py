@@ -40,7 +40,9 @@ from .heuristics import (
     tune,
     tuned_frontier,
 )
+from .leakage import AuditReport, Finding, audit
 from .policies import Outcome, standard_baselines
+from .report import Report, build, compare_to_golden, format_table
 from .stats import (
     Interval,
     McNemarResult,
@@ -53,14 +55,17 @@ from .stats import (
 )
 
 __all__ = [
-    "OPEN_SPLITS",
-    "OUTCOMES",
+    "AuditReport",
     "Confusion",
+    "Finding",
     "Interval",
     "MatchedComparison",
     "McNemarResult",
+    "OPEN_SPLITS",
+    "OUTCOMES",
     "Outcome",
     "Point",
+    "Report",
     "Rollouts",
     "StoreError",
     "TestSplitError",
@@ -68,11 +73,15 @@ __all__ = [
     "ThresholdRule",
     "TunedHeuristic",
     "accuracy_at_cost",
+    "audit",
     "benjamini_hochberg",
+    "build",
     "cluster_bootstrap",
     "compare_at_matched_cost",
+    "compare_to_golden",
     "confusion",
     "features_from_tasks",
+    "format_table",
     "frontier_dominates",
     "load_rows",
     "load_run",
