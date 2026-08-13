@@ -13,6 +13,14 @@ orch-workers --help
 
 Every subcommand also runs as `python -m orchestrator.workers.cli`.
 
+To reproduce the GPU run rather than read about it, provision the serving stack
+first — **[`bench/setup_gpu_env.sh`](setup_gpu_env.sh)**. Every pin and flag in
+it is a failure that actually happened on this hardware, with the symptom
+recorded next to the fix. The two that bite silently: vLLM needs
+`VLLM_USE_FLASHINFER_SAMPLER=0` where no CUDA toolkit is installed, and the
+characterization server needs `--no-enable-prefix-caching` or the fit returns a
+negative prefill coefficient that looks like a plausible number.
+
 > **Status — 13 Aug 2026.** Every command on this page has been run against a
 > real GPU. The numbers below are measurements.
 >
