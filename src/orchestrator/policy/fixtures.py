@@ -174,37 +174,96 @@ def write_cost_sidecar(root: Path, run_id: str, rows: list[dict[str, Any]],
     return fingerprint
 
 
+#: R2's graded layer, restated here for the same reason `store.py` restates it:
+#: `graders.rollout_store` is not on `main` yet.
+GRADED_ROWS_DIR = "rollouts"
+GRADED_MANIFEST_NAME = "_ROLLOUT_MANIFEST.json"
+
+#: Grading columns R2 fills. Nulled out in the generations layer so a `split`
+#: layout reproduces the real thing: R1 writes these as nulls, R2 fills them in
+#: a separate directory, and nothing is ever mutated in place.
+_GRADE_COLUMNS = (
+    "visible_passed", "visible_total", "hidden_passed", "hidden_total",
+    "error_class", "hack_flags", "grade_duration_s",
+)
+
+
+def _write_part(directory: Path, rows: list[dict[str, Any]]) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    part = directory / "part-000001-0000000000-5ynth1.jsonl"
+    with part.open("w", encoding="utf-8", newline="") as fh:
+        for row in rows:
+            fh.write(json.dumps(row, default=str, ensure_ascii=False) + "\n")
+    return part
+
+
 def write_fixture(root: Path | str, config: SynthConfig | None = None, *,
                   seed: int = 0, sealed: bool = True,
-                  with_cost: bool = True) -> Fixture:
+                  with_cost: bool = True,
+                  layout: str = "generations",
+                  seal_graded: bool = True) -> Fixture:
     """Materialize a synthetic run as a readable run directory.
+
+    `layout` picks the shape on disk:
+
+    * `"generations"` — one layer, grades already present. Compact, and what
+      most tests want.
+    * `"split"` — the real production shape: R1's ungraded rows in
+      `generations/`, the same rows with grades filled in `rollouts/`, each
+      sealed by its own manifest. R2 never edits R1's files, because a sealed
+      run's manifest carries per-file checksums.
 
     `sealed=False` produces the one shape a reader must skip: rows on disk with
     no manifest. It is not a broken fixture, it is an interrupted sweep, and
-    the distinction is the whole reason the seal exists.
+    the distinction is the whole reason the seal exists. `seal_graded=False`
+    does the same one layer up — grading interrupted half way.
     """
+    if layout not in ("generations", "split"):
+        raise ValueError(
+            f"unknown layout {layout!r}; expected 'generations' or 'split'"
+        )
+
     root = Path(root)
     result = generate(config, seed=seed)
     run_id = result.run_id
+    directory = root / run_id
 
-    rows_dir = root / run_id / ROWS_DIR
-    rows_dir.mkdir(parents=True, exist_ok=True)
-    part = rows_dir / "part-000001-0000000000-5ynth1.jsonl"
-    with part.open("w", encoding="utf-8", newline="") as fh:
-        for row in result.rows:
-            fh.write(json.dumps(row, default=str, ensure_ascii=False) + "\n")
+    if layout == "split":
+        ungraded = [
+            {**row, **{column: None for column in _GRADE_COLUMNS}}
+            for row in result.rows
+        ]
+        _write_part(directory / ROWS_DIR, ungraded)
+        _write_part(directory / GRADED_ROWS_DIR, result.rows)
+    else:
+        _write_part(directory / ROWS_DIR, result.rows)
 
     fingerprint = (write_cost_sidecar(root, run_id, result.rows)
                    if with_cost else None)
-    tasks_path = write_tasks(root / run_id / "tasks.jsonl", result)
+    tasks_path = write_tasks(directory / "tasks.jsonl", result)
 
     if sealed:
-        (root / run_id / MANIFEST_NAME).write_text(json.dumps({
+        (directory / MANIFEST_NAME).write_text(json.dumps({
             "run_id": run_id,
             "schema_version": result.rows[0]["schema_version"],
             "sealed_at": f"{result.truth['config'].date}T00:00:00Z",
             "publishable": not run_id.endswith("-dirty"),
             "n_rows": len(result.rows),
+            "source": "schemas.synth",
+        }, indent=2, sort_keys=True), encoding="utf-8")
+
+    if layout == "split" and seal_graded:
+        # Deliberately carries no `publishable` key, matching R2's seal. A
+        # fixture that added one would hide the fact that publishability has
+        # to come from R1's manifest.
+        (directory / GRADED_MANIFEST_NAME).write_text(json.dumps({
+            "run_id": run_id,
+            "sealed_at": f"{result.truth['config'].date}T00:00:00Z",
+            "n_rows": len(result.rows),
+            "solved_count": sum(
+                1 for row in result.rows
+                if row["hidden_total"] and row["hidden_passed"] == row["hidden_total"]
+            ),
             "source": "schemas.synth",
         }, indent=2, sort_keys=True), encoding="utf-8")
 
