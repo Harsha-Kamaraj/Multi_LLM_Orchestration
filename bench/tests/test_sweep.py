@@ -91,6 +91,36 @@ def test_an_interrupted_sweep_leaves_an_unsealed_run(sweep_config):
     assert len(list(read_rows(sweep_config.out_root, run_id, allow_unsealed=True))) == 16
 
 
+def test_a_run_with_errored_cells_is_left_open_for_retry(sweep_config):
+    """"Errors are retried on resume" is only reachable if the run stays open.
+    Sealing one that holds retryable cells strands them: the config hashes into
+    the run_id, so the identical re-run meant to retry them finds the same id
+    sealed and incomplete, and refuses."""
+    from orchestrator.workers.store import RolloutStore
+
+    config = evolve(sweep_config, backend_options={"error_rate": 0.5})
+    report = run_sweep(config)
+    assert report.failed > 0
+    assert not RolloutStore(config.out_root, report.run_id).is_sealed
+    assert any("retryable" in w for w in report.warnings)
+
+    # The identical command is what retries them, so it must run rather than
+    # hard-fail on a sealed id.
+    again = run_sweep(config)
+    assert again.run_id == report.run_id
+
+
+def test_a_clean_run_still_seals(sweep_config):
+    """The open-on-error path must not stop a complete run from sealing."""
+    from orchestrator.workers.store import RolloutStore
+
+    config = evolve(sweep_config, backend_options={"error_rate": 0.0})
+    report = run_sweep(config)
+    assert report.failed == 0
+    assert RolloutStore(config.out_root, report.run_id).is_sealed
+    assert report.manifest
+
+
 def test_resume_generates_only_what_is_missing(sweep_config):
     with pytest.raises(KeyboardInterrupt):
         run_sweep(sweep_config, backend=Preempted(after=2))

@@ -306,17 +306,34 @@ def run_sweep(config: SweepConfig, *, backend: Backend | None = None,
             )
             log.error("%s", warnings[-1])
 
-        manifest = store.seal(
-            config={"identity": identity, "sweep": _serializable(config)},
-            extra={
-                "warnings": warnings,
-                "corpus_counts": corpus.counts(),
-                "resume": summarize(index, len(planned_cells)),
-                "backend": backend.name,
-                "backend_mode": backend.mode,
-                "honors_seed": backend.honors_seed,
-            },
-        )
+        # Sealing is what makes a run immutable and valid to read, so it may
+        # only happen once the run is complete. An errored cell is retryable
+        # and its row does not satisfy the resume index, so sealing a run that
+        # holds any would strand them permanently: the config hashes into the
+        # run_id, so the identical re-run that is supposed to retry them finds
+        # the same id sealed and incomplete and refuses. Leaving the run open
+        # is what makes "errors are retried on resume" reachable at all.
+        manifest: dict[str, Any] = {}
+        if failed:
+            warnings.append(
+                f"{failed} cell(s) errored and remain retryable, so run {run_id} "
+                f"is left open rather than sealed. Re-run the identical command "
+                f"to retry them; the run seals once every planned cell holds a "
+                f"non-error row. Nothing may read it until then."
+            )
+            log.warning("%s", warnings[-1])
+        else:
+            manifest = store.seal(
+                config={"identity": identity, "sweep": _serializable(config)},
+                extra={
+                    "warnings": warnings,
+                    "corpus_counts": corpus.counts(),
+                    "resume": summarize(index, len(planned_cells)),
+                    "backend": backend.name,
+                    "backend_mode": backend.mode,
+                    "honors_seed": backend.honors_seed,
+                },
+            )
 
         report = SweepReport(
             run_id=run_id, planned=len(planned_cells), generated=generated,
