@@ -368,13 +368,22 @@ def read_task_features(tasks_path: Path | str) -> dict[str, dict[str, str]]:
     from ..workers.corpus import load_tasks
 
     tasks = load_tasks(tasks_path)
-    out: dict[str, dict[str, str]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for task in tasks:
-        out[task.task_id] = {
+        joined: dict[str, Any] = {
             "task_prompt": task.prompt,
             "task_entrypoint": task.entrypoint,
             "task_visible_tests": str(task.metadata.get("visible_tests", "")),
         }
+        # Fixture-only. `schemas.synth` plants a prompt-only proxy for
+        # difficulty and the rollout row has nowhere to carry it, so the
+        # fixture's task manifest supplies it through the same channel a real
+        # prompt feature would use. Absent on a real corpus, and the key is
+        # simply omitted there rather than defaulted — a zero would be a
+        # feature value, and a constant one at that.
+        if "x_d0" in task.metadata:
+            joined["task_x_d0"] = float(task.metadata["x_d0"])
+        out[task.task_id] = joined
     return out
 
 

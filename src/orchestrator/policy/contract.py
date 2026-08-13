@@ -77,6 +77,12 @@ D0_OBSERVABLE: frozenset[str] = frozenset({
     # Joined from R2's manifest. Prefixed so a prompt can never be mistaken for
     # model output, and carrying no hidden tests.
     "task_prompt", "task_entrypoint", "task_visible_tests",
+    # Fixture-only: the planted prompt-only proxy, present on a synthetic
+    # corpus and absent on a real one. D0-observable because that is exactly
+    # what it stands in for — a prompt feature. The latent difficulty it is a
+    # noisy view of is quarantined in `RolloutData.latent` and appears in no
+    # allowlist at all.
+    "task_x_d0",
 })
 
 #: Additionally observable once the candidate exists and the visible tests have
