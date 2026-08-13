@@ -55,6 +55,60 @@ from .errors import (
 #: Where R1's imputation pass writes cost sidecars, one per coefficient set.
 COST_DIR = "cost"
 
+
+@dataclass(frozen=True)
+class StoreLayer:
+    """One writable layer of a run directory, and how to read it.
+
+    A run has two, written by different roles and sealed independently:
+
+        runs/{run_id}/generations/  R1's, ungraded, sealed by _MANIFEST.json
+        runs/{run_id}/rollouts/     R2's, the same rows with grades filled in,
+                                    sealed by _ROLLOUT_MANIFEST.json
+
+    R2's grading pass reads R1's sealed generations and writes
+    `{**generation, **grade}` into its own directory rather than editing R1's
+    files, because a sealed run's manifest carries per-file checksums and
+    rewriting rows to add columns would invalidate every number already
+    computed from it.
+
+    R3's labels therefore live in `rollouts/`, and a reader that only knows
+    about `generations/` finds every grading column null and concludes the run
+    is ungraded — while the grades sit one directory over. That failure is
+    silent and total, which is why the layer is modelled explicitly here
+    instead of being a path constant.
+    """
+
+    name: str
+    rows_dir: str
+    manifest_name: str
+    parquet_name: str
+
+
+#: R2's graded layer. Constants are restated rather than imported from
+#: `graders.rollout_store` because that module is not on `main` yet — it lives
+#: on R2's branch. When it lands, the conformance test in `test_store.py` is
+#: what catches any disagreement between these values and theirs.
+GRADED_LAYER = StoreLayer(
+    name="rollouts",
+    rows_dir="rollouts",
+    manifest_name="_ROLLOUT_MANIFEST.json",
+    parquet_name="rollouts.parquet",
+)
+
+#: R1's ungraded layer, whose constants *are* importable and so are imported.
+GENERATED_LAYER = StoreLayer(
+    name="generations",
+    rows_dir=ROWS_DIR,
+    manifest_name=MANIFEST_NAME,
+    parquet_name=PARQUET_NAME,
+)
+
+#: Preference order when no layer is named. Graded first: it is the only layer
+#: that carries labels, and reading the ungraded one when a graded one exists
+#: would train on nothing.
+LAYERS: tuple[StoreLayer, ...] = (GRADED_LAYER, GENERATED_LAYER)
+
 #: The split vocabulary, read out of the ratified schema itself.
 _SCHEMA_SPLITS: tuple[str, ...] = tuple(
     rollout_schema()["properties"]["split"]["enum"]
@@ -120,6 +174,14 @@ class RolloutData:
     source: str
     cost_fingerprint: str | None = None
     tasks_path: str | None = None
+    #: Which layer the rows came from: R2's graded `rollouts` or R1's
+    #: ungraded `generations`.
+    layer: str = GENERATED_LAYER.name
+    #: R1's manifest, kept even when reading the graded layer. R2's manifest
+    #: records grading counts and carries no `publishable` key, so the
+    #: publishability of anything derived from this run has to come from the
+    #: layer that knows whether the worktree was clean.
+    generations_manifest: dict[str, Any] = field(default_factory=dict)
     #: Planted ground truth on a synthetic run, keyed by `rollout_id`. Empty on
     #: a real one. Held here rather than on the row so that a test can assert
     #: against the planted signal while a feature builder structurally cannot
@@ -132,6 +194,11 @@ class RolloutData:
     @property
     def is_synthetic(self) -> bool:
         return bool(self.latent)
+
+    @property
+    def is_graded(self) -> bool:
+        """Whether these rows carry labels at all."""
+        return bool(self.labels)
 
     @property
     def publishable(self) -> bool:
@@ -149,7 +216,8 @@ class RolloutData:
         """
         if self.run_id.endswith("-dirty"):
             return False
-        return bool(self.manifest.get("publishable", False))
+        source = self.generations_manifest or self.manifest
+        return bool(source.get("publishable", False))
 
     @property
     def has_cost(self) -> bool:
@@ -226,23 +294,74 @@ def list_cost_fingerprints(root: Path | str, run_id: str) -> list[str]:
     return sorted(p.stem for p in directory.glob("*.jsonl"))
 
 
-def read_manifest(root: Path | str, run_id: str) -> dict[str, Any]:
-    """Load the seal, or refuse the run because it has none."""
+def read_manifest(root: Path | str, run_id: str,
+                  layer: StoreLayer = GENERATED_LAYER) -> dict[str, Any]:
+    """Load a layer's seal, or refuse the run because it has none."""
     directory = run_dir(root, run_id)
     if not directory.exists():
         raise StoreReadError(
             f"no such run: {directory}. Nothing resolves 'latest' — pin an "
-            f"explicit run_id from `orch-workers runs`."
+            f"explicit run_id from `orch-policy runs`."
         )
-    path = directory / MANIFEST_NAME
+    path = directory / layer.manifest_name
     if not path.exists():
         raise StoreReadError(
-            f"run {run_id} has no {MANIFEST_NAME} and is not valid to read; it "
-            f"is either still running or was interrupted. Readers skip "
-            f"unsealed runs, which is what stops a partial sweep being read as "
-            f"a complete one."
+            f"run {run_id} has no {layer.manifest_name} and its "
+            f"{layer.name!r} layer is not valid to read; it is either still "
+            f"running or was interrupted. Readers skip unsealed runs, which is "
+            f"what stops a partial sweep being read as a complete one."
         )
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _layer_is_sealed(root: Path | str, run_id: str, layer: StoreLayer) -> bool:
+    return (run_dir(root, run_id) / layer.manifest_name).exists()
+
+
+def _layer_exists(root: Path | str, run_id: str, layer: StoreLayer) -> bool:
+    return (run_dir(root, run_id) / layer.rows_dir).exists()
+
+
+def select_layer(root: Path | str, run_id: str,
+                 name: str | None = None) -> StoreLayer:
+    """Choose which layer to read, preferring grades.
+
+    An unsealed graded layer is refused rather than silently skipped. Falling
+    back to `generations/` would report the run as ungraded when grading is
+    merely half-finished — and "ungraded" and "partially graded" call for
+    completely different actions.
+    """
+    directory = run_dir(root, run_id)
+    if not directory.exists():
+        raise StoreReadError(
+            f"no such run: {directory}. Nothing resolves 'latest' — pin an "
+            f"explicit run_id from `orch-policy runs`."
+        )
+
+    if name is not None:
+        for layer in LAYERS:
+            if layer.name == name:
+                return layer
+        raise StoreReadError(
+            f"unknown layer {name!r}; a run has {[l.name for l in LAYERS]}"
+        )
+
+    for layer in LAYERS:
+        if _layer_is_sealed(root, run_id, layer):
+            return layer
+        if _layer_exists(root, run_id, layer):
+            raise StoreReadError(
+                f"run {run_id} has a {layer.name!r} directory but no "
+                f"{layer.manifest_name}: grading is in progress or was "
+                f"interrupted. Reading the ungraded layer instead would report "
+                f"this run as never graded. Pass layer='generations' to "
+                f"inspect the generations regardless."
+            )
+
+    raise StoreReadError(
+        f"run {run_id} has no sealed layer; expected one of "
+        f"{[l.manifest_name for l in LAYERS]}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +369,9 @@ def read_manifest(root: Path | str, run_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _iter_jsonl(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str, Any]]]:
+def _iter_jsonl(root: Path | str, run_id: str,
+                layer: StoreLayer = GENERATED_LAYER,
+                ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Stream rows from the authoritative part files, with line numbers.
 
     A torn final line is skipped rather than raised on: a sweep killed
@@ -259,7 +380,7 @@ def _iter_jsonl(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str, 
     file and line, because a bare decode error on a six-thousand-row store is
     close to useless.
     """
-    rows_dir = run_dir(root, run_id) / ROWS_DIR
+    rows_dir = run_dir(root, run_id) / layer.rows_dir
     parts = sorted(rows_dir.glob("part-*.jsonl"))
     if not parts:
         raise StoreReadError(f"run {run_id} has no part files under {rows_dir}")
@@ -282,7 +403,9 @@ def _iter_jsonl(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str, 
             yield f"{part.name}:{lineno}", row
 
 
-def _iter_parquet(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str, Any]]]:
+def _iter_parquet(root: Path | str, run_id: str,
+                  layer: StoreLayer = GENERATED_LAYER,
+                  ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Stream rows from the derived Parquet view.
 
     `extra` is re-parsed here rather than downstream. R1 serializes it to a
@@ -298,7 +421,7 @@ def _iter_parquet(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str
     """
     import pyarrow.parquet as pq  # type: ignore[import-not-found]
 
-    path = run_dir(root, run_id) / ROWS_DIR / PARQUET_NAME
+    path = run_dir(root, run_id) / layer.rows_dir / layer.parquet_name
     table = pq.read_table(path)
     for index, row in enumerate(table.to_pylist()):
         if isinstance(row.get("extra"), str):
@@ -307,11 +430,12 @@ def _iter_parquet(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str
             except json.JSONDecodeError:
                 parsed = {"_unparsed": row["extra"]}
             row["extra"] = parsed if isinstance(parsed, dict) else {"_value": parsed}
-        yield f"{PARQUET_NAME}:{index}", row
+        yield f"{layer.parquet_name}:{index}", row
 
 
-def _parquet_available(root: Path | str, run_id: str) -> bool:
-    path = run_dir(root, run_id) / ROWS_DIR / PARQUET_NAME
+def _parquet_available(root: Path | str, run_id: str,
+                       layer: StoreLayer = GENERATED_LAYER) -> bool:
+    path = run_dir(root, run_id) / layer.rows_dir / layer.parquet_name
     if not path.exists():
         return False
     try:
@@ -412,6 +536,7 @@ def load_rollouts(root: Path | str, run_id: str, *,
                   splits: Sequence[str] = ("train", "val"),
                   cost_fingerprint: str | None = None,
                   tasks_path: Path | str | None = None,
+                  layer: str | None = None,
                   require_grades: bool = True,
                   validate_schema: bool = True,
                   check_integrity: bool = True,
@@ -427,6 +552,9 @@ def load_rollouts(root: Path | str, run_id: str, *,
             is the honest default while no coefficients exist.
         tasks_path: R2's manifest. Without it the prompt-side D0 features
             cannot be built, because the rollout row carries no prompt.
+        layer: `rollouts` (R2's graded rows) or `generations` (R1's ungraded
+            ones). Defaults to whichever is sealed, preferring graded — the
+            labels only exist in R2's layer.
         require_grades: refuse a run R2 has not graded. Leave this on unless
             you are inspecting a sweep rather than training on one.
         validate_schema: check every row against `rollout.schema.json`. Catches
@@ -438,11 +566,22 @@ def load_rollouts(root: Path | str, run_id: str, *,
         skip_checks: omit named checks by slug, same caveat.
     """
     wanted_splits = _check_splits(splits)
-    manifest = read_manifest(root, run_id)
+    selected = select_layer(root, run_id, layer)
+    manifest = read_manifest(root, run_id, selected)
 
-    use_parquet = prefer_parquet and _parquet_available(root, run_id)
-    reader = _iter_parquet if use_parquet else _iter_jsonl
+    # Kept regardless of which layer supplied the rows: R2's manifest records
+    # grading counts and says nothing about whether the sweep was publishable.
+    generations_manifest: dict[str, Any] = {}
+    if selected is not GENERATED_LAYER and _layer_is_sealed(
+            root, run_id, GENERATED_LAYER):
+        generations_manifest = read_manifest(root, run_id, GENERATED_LAYER)
+
+    use_parquet = prefer_parquet and _parquet_available(root, run_id, selected)
     source = "parquet" if use_parquet else "jsonl"
+
+    def reader(root_: Path | str, run_id_: str):
+        stream = _iter_parquet if use_parquet else _iter_jsonl
+        return stream(root_, run_id_, selected)
 
     costs = (read_cost_sidecar(root, run_id, cost_fingerprint)
              if cost_fingerprint is not None else {})
@@ -574,5 +713,7 @@ def load_rollouts(root: Path | str, run_id: str, *,
         source=source,
         cost_fingerprint=cost_fingerprint,
         tasks_path=str(tasks_path) if tasks_path is not None else None,
+        layer=selected.name,
+        generations_manifest=generations_manifest,
         latent=latent,
     )
