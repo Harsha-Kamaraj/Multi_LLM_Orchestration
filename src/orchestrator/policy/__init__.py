@@ -30,8 +30,15 @@ __all__ = [
     "SchemaVersionError",
     "LeakageError",
     "SplitError",
+    "StoreIntegrityError",
     "StoreReadError",
     "UngradedRunError",
+    # integrity
+    "IntegrityIssue",
+    "check_integrity",
+    # synthetic fixtures
+    "Fixture",
+    "write_fixture",
     # the row contract
     "SUPPORTED_SCHEMA_VERSIONS",
     "D0_OBSERVABLE",
@@ -67,9 +74,12 @@ from .errors import (
     PolicyError,
     SchemaVersionError,
     SplitError,
+    StoreIntegrityError,
     StoreReadError,
     UngradedRunError,
 )
+from .fixtures import Fixture, write_fixture
+from .integrity import IntegrityIssue, check_integrity
 from .store import (
     Label,
     RolloutData,
