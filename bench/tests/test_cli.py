@@ -149,3 +149,32 @@ def test_an_unknown_arm_is_rejected_by_the_parser(corpus_path):
 def test_runs_reports_an_empty_store(tmp_path, capsys):
     assert run("--runs-root", tmp_path / "runs", "runs") == 0
     assert "no runs" in capsys.readouterr().out
+
+
+def test_validate_prints_its_report_on_eligible_rows(tmp_path, corpus_path,
+                                                     runs_root, capsys):
+    """The success path, which the refusal tests never reach: they return
+    before printing. `validate` is the definition-of-done command, and it
+    printed a report that could not be produced -- `summary` is a property,
+    and calling it raised TypeError against every real run."""
+    from orchestrator.workers.characterize import build_probes, run_and_save
+    from orchestrator.workers.backends import get_backend
+
+    coefficients = tmp_path / "cost_coefficients.json"
+    run_and_save(get_backend("mock", mode="serving"), coefficients,
+                 concurrencies=(1,), probes=build_probes(repeats=6),
+                 require_exact_tokens=False)
+
+    # A serving-mode sweep at the reference batch is what validate accepts.
+    assert run("--runs-root", runs_root, "sweep", "--tasks", corpus_path,
+               "--backend", "mock", "--backend-option", "mode=serving",
+               "--seeds", 0, "--batch-size", 1,
+               "--coefficients", coefficients) == 0
+    run_id = [ln.split(": ", 1)[1] for ln in capsys.readouterr().out.splitlines()
+              if ln.startswith("run_id: ")][0]
+
+    rc = run("--runs-root", runs_root, "validate", "--run", run_id,
+             "--coefficients", coefficients)
+    out = capsys.readouterr().out
+    assert "R^2=" in out and ("[PASS]" in out or "[FAIL]" in out)
+    assert rc in (0, 1)

@@ -267,7 +267,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         )
         return 1
     for report in reports:
-        print(report.summary())
+        print(report.summary)
     return 0 if all(r.passed for r in reports) else 1
 
 
