@@ -20,6 +20,12 @@ store = ["pyarrow>=16.0"]
 # `orch corpus build` needs it once to fetch HumanEval+/MBPP+; grading a
 # task never does.
 data = ["evalplus>=0.3.1"]
+# R3's learning stack, CPU-only. Kept optional for the same reason the others
+# are: reading a rollout store must not require installing an estimator. The
+# policy is choosing among a handful of arms with a few dozen features over
+# ~1,000 tasks, so a tabular model is the right tool until a measured gap says
+# otherwise — no RL framework, no fine-tuned policy LM, no vector DB.
+policy = ["scikit-learn>=1.4", "lightgbm>=4.0"]
 
 [project.scripts]
 orch = "orchestrator.cli:main"
