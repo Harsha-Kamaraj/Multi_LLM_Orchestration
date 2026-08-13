@@ -38,7 +38,16 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+# `schemas` and `eval` live at the repo root rather than under `src/`, so they
+# need discovering separately or they are importable from a checkout and
+# missing from an install — which breaks every console script, since a role's
+# code imports the shared contract at module scope.
+#
+# The four roles ship as one distribution. That is not a weakening of the
+# separation between them: ownership is enforced by CODEOWNERS and by the
+# pre-commit scope check, neither of which cares how the wheel is built.
+where = ["src", "."]
+include = ["orchestrator*", "schemas*", "eval*"]
 
 [tool.pytest.ini_options]
 # Each role's tests live inside that role's commit scope, so a test change and
