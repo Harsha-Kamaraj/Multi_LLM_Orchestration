@@ -25,6 +25,8 @@ __all__ = [
     "D1_FEATURES",
     "PROBE_FEATURES",
     "feature_set",
+    "Standardizer",
+    "fit_standardizer",
 ]
 
 from .spec import (
@@ -38,6 +40,7 @@ from .spec import (
 )
 from .d0 import D0_FEATURES
 from .d1 import D1_FEATURES, PROBE_FEATURES
+from .scaling import Standardizer, fit_standardizer
 
 
 def feature_set(decision_point: str, *, with_probe: bool = False) -> FeatureSet:
