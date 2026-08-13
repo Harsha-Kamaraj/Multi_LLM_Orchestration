@@ -24,6 +24,7 @@ costing is pinned by coefficient fingerprint the same way.
 from __future__ import annotations
 
 __all__ = [
+    # errors
     "PolicyError",
     "ContractError",
     "SchemaVersionError",
@@ -31,8 +32,35 @@ __all__ = [
     "SplitError",
     "StoreReadError",
     "UngradedRunError",
+    # the row contract
+    "SUPPORTED_SCHEMA_VERSIONS",
+    "D0_OBSERVABLE",
+    "D1_OBSERVABLE",
+    "LABEL_COLUMNS",
+    "NEVER_A_FEATURE",
+    "observable_at",
+    "normalize_row",
+    "is_graded",
+    "solved",
+    # reading a pinned run
+    "Label",
+    "RolloutData",
+    "load_rollouts",
+    "list_cost_fingerprints",
+    "read_manifest",
 ]
 
+from .contract import (
+    D0_OBSERVABLE,
+    D1_OBSERVABLE,
+    LABEL_COLUMNS,
+    NEVER_A_FEATURE,
+    SUPPORTED_SCHEMA_VERSIONS,
+    is_graded,
+    normalize_row,
+    observable_at,
+    solved,
+)
 from .errors import (
     ContractError,
     LeakageError,
@@ -41,4 +69,11 @@ from .errors import (
     SplitError,
     StoreReadError,
     UngradedRunError,
+)
+from .store import (
+    Label,
+    RolloutData,
+    list_cost_fingerprints,
+    load_rollouts,
+    read_manifest,
 )
