@@ -157,10 +157,29 @@ are stamped `-dirty` and are non-publishable.
 
 ## What blocks a merge
 
-- Pre-commit hook passes (scope, format, no cross-role edits)
-- `CODEOWNERS` review from every owning role
-- Golden-run test reproduces `results.json` exactly, or the change is explicitly
-  marked `BREAKING-GOLDEN:` in the PR body with the diff explained
-- Adversarial-fixture pipeline test passes
-- Leakage canary caught
-- No new bare mean in the report — every number carries an interval
+| | Check | Enforced by |
+|---|---|---|
+| ✅ | Pre-commit hook passes (scope, format, no cross-role edits) | `.githooks/pre-commit`, per clone |
+| ✅ | `CODEOWNERS` review from every owning role | GitHub, if the listed handles have write access |
+| ❌ | Golden-run test reproduces `results.json` exactly, or the change is marked `BREAKING-GOLDEN:` in the PR body | Not written — there is no `results.json` and no golden run |
+| ✅ | Adversarial-fixture pipeline test passes | `schemas/adversarial.py` + `schemas/tests/test_adversarial.py` |
+| ❌ | Leakage canary caught | Not written — R4's audit tooling does not exist |
+| ❌ | No new bare mean in the report — every number carries an interval | There is no report yet. `eval/tests/test_integration.py` encodes the rule as a test on the harness, which is the closest thing that exists. |
+
+### What is not enforced yet — 13 Aug 2026
+
+Two rules in this file are currently decorative, and saying so is cheaper than
+discovering it during a Phase 1 merge:
+
+**❌ There is no CI.** No `.github/workflows/` directory exists. `CODEOWNERS`
+already assigns all-four approval to that path, and this file says checks are
+"checked by the hook, CI, or `CODEOWNERS`" — today it is the hook and
+`CODEOWNERS` only. Every check marked ❌ above is a check nobody runs.
+
+**❌ Branch protection is unverified.** The bootstrap exception below expired the
+moment `main` was pushed. Until protection is on, "no direct commits to `main`"
+is honour-system, and the hook does not enforce it — the hook checks scope and
+format, never the branch.
+
+The pre-commit hook is also opt-in per clone (`git config core.hooksPath
+.githooks`). A contributor who skips that line is subject to none of this.

@@ -200,14 +200,29 @@ An evaluation harness that has never been run against a known answer is not vali
 
 ---
 
-## Week 1 (Phase 0)
+## Week 1 (Phase 0) — status at 13 Aug 2026
 
-- [ ] Own the `schemas/` freeze — day 3, all four sign off
-- [ ] Power analysis off measured discordance → the corpus size everyone commits to
-- [ ] All seven baselines implemented against fixtures, including `heuristic_route`
-- [ ] Cluster bootstrap + McNemar, validated on the planted signal
-- [ ] Oracle-gap study on the pilot
-- [ ] Leakage audit tooling — independent of R3's feature code
+R4 is the furthest-along seat: `schemas/` and `eval/` both landed, 160 tests
+green. What is missing is not code, it is anything to point the code at.
+
+| | Item | Where it stands |
+|---|---|---|
+| ✅ | Own the `schemas/` freeze | `schemas/` is frozen — `Task` + `Rollout` JSON schemas, `SCHEMA_VERSION` guards, a validation layer with rollout invariants, and a conformance test binding R1's emitted row to the contract |
+| ❌ | …day 3, all four sign off | Landed unilaterally and past day 3. The artifact is right; the ratification step named in `docs/CONTRIBUTING.md` § Schema changes did not happen. |
+| ❌ | Power analysis off measured discordance → the corpus size everyone commits to | `mcnemar_sample_size()` and `bootstrap_power()` are implemented and tested. Both need a **measured** discordance rate, and there is no pilot. The 1,000–1,500 figure below is still an assumption. |
+| ✅ | All seven baselines implemented against fixtures, including `heuristic_route` | Six in `standard_baselines()`; `heuristic_route` lives in `eval/heuristics.py` because it must be fitted on validation first. It is tuned across families and swept to a frontier via `tuned_frontier()`, not shipped as a point. |
+| ✅ | Cluster bootstrap + McNemar, validated on the planted signal | `cluster_bootstrap` resamples tasks *and* seeds, `mcnemar_exact`, `benjamini_hochberg`. `eval/tests/test_integration.py` checks the planted-optimal policy is recovered at the planted effect size. |
+| ❌ | Oracle-gap study on the pilot | `oracle_headroom()` is implemented and tested. There is no pilot. |
+| ❌ | Leakage audit tooling — independent of R3's feature code | Not written. It is also not yet blocking: R3 has produced no features to audit. |
+
+Also built, beyond the week-1 list: the matched-cost frontier
+(`compare_at_matched_cost`, `pareto_front`, `frontier_dominates`), the full
+five-cell router confusion matrix, and a loader that refuses the test split
+unless `unlock_test_split()` is called with a reason and a committed
+pre-registration file.
+
+**Still open for R4:** `data/splits/`, the golden-run test, and the report
+itself — none exist.
 
 ---
 

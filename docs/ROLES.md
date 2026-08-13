@@ -186,3 +186,23 @@ produced it.
 | Reads rollout store | | | ✅ | ✅ |
 | Can open the test split | | | | ✅ |
 | Blocked in week 1 by | R2's manifest | — | — | — |
+
+---
+
+## Delivery at a glance — 13 Aug 2026
+
+Two columns, deliberately. Collapsing them is how "built" gets read as "working".
+
+| Role | Code landed | Producing real numbers |
+|---|---|---|
+| R1 · Serving & Workers | ✅ 270 tests, whole pipeline against a mock backend | ❌ never touched a GPU |
+| R2 · Verifier & Data | ❌ grader is the original scaffold, not the contract below | ❌ no corpus, no graded row |
+| R3 · Policy & Learning | ❌ `src/orchestrator/policy/` does not exist | ❌ |
+| R4 · Evaluation & Analysis | ✅ 50 + 110 tests — `schemas/` and `eval/` | ❌ no store to evaluate |
+
+The critical path runs through the two ❌ code cells. R2's task manifest is the
+only true cross-role dependency in Phase 1 and it is still open, which is what
+keeps R1 at "built" rather than "measured".
+
+Where each role's contract has drifted from what is actually in the tree, the
+divergence is recorded in that role's own doc rather than smoothed over here.

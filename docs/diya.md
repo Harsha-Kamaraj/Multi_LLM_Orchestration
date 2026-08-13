@@ -117,13 +117,35 @@ frozen. Hand over the corpus; don't hold the split.
 
 ---
 
-## Week 1 (Phase 0)
+## Week 1 (Phase 0) — status at 13 Aug 2026
 
-- [ ] Sign off on `schemas/` by day 3
-- [ ] Task manifest for the 200-task pilot — **this is R1's blocker, ship it first**
-- [ ] Docker grader working end to end, per-test pass counts
-- [ ] Grade R1's pilot sweep
-- [ ] A deliberately malicious solution suite, and a hack detector that catches it
+R2 is on the critical path and is the least advanced seat that other people are
+waiting on. `src/orchestrator/graders/` still holds the original scaffold —
+182 lines, no tests of its own, and an interface that does not match the contract
+above.
+
+| | Item | Where it stands |
+|---|---|---|
+| ❌ | Sign off on `schemas/` by day 3 | The package landed from R4 without R2 review. `hack_flags`, `error_class`, and the `visible_*`/`hidden_*` fields are all in the rollout schema — R2 does not yet emit any of them. |
+| ❌ | Task manifest for the 200-task pilot — **this is R1's blocker, ship it first** | There is no `data/` directory. This is the only true cross-role dependency in Phase 1 and it is holding R1 at "built, never measured". |
+| ❌ | Docker grader working end to end, per-test pass counts | The `docker` backend is written in `pytest_grader.py` with every documented flag (`--network none --read-only --memory 512m --pids-limit 128 --cpus 1 --tmpfs`), and per-test counts are recovered by an in-sandbox reporter. **It has never been run** — there are no grader tests and no graded row. |
+| ❌ | Grade R1's pilot sweep | No pilot exists to grade |
+| ❌ | A deliberately malicious solution suite, and a hack detector that catches it | Neither exists. `hack_flags` is a schema field with no producer. |
+
+### The interface has drifted, and it is R2's to close
+
+What this doc specifies, versus what `src/orchestrator/graders/` actually does:
+
+| | Specified | In the tree |
+|---|---|---|
+| ❌ | `grade(task, code)` — R1 does the extraction | `grade(task, output)`, which calls `base.extract_code(output)` itself — the dependency this doc says was "removed deliberately" is still there |
+| ❌ | `visible_passed/total`, `hidden_passed/total` as separate accessors | `Grade` is `passed` / `total` — **the visible/hidden split does not exist in code**, so it is currently convention, which is exactly what this doc forbids |
+| ❌ | `error_class`, `hack_flags` | `Grade` has a free-text `error` and no `hack_flags` |
+| ✅ | Docker flags, and no credentials in the subprocess env | Both implemented as documented |
+
+The first two rows are the load-bearing ones. Until `Grade` carries the split,
+nothing mechanically stops a hidden-test outcome reaching a feature builder, and
+R1 is doing extraction twice.
 
 ---
 

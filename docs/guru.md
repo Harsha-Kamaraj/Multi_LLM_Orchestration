@@ -149,7 +149,7 @@ means prompt format is entirely your business.
 
 ---
 
-## Status — 12 Aug 2026
+## Status — 13 Aug 2026
 
 **Every line of code R1 owes is written and tested. Not one of it has touched a
 GPU.** That is the whole summary, and the tables below are the unflattering
@@ -160,10 +160,10 @@ and none of my numbers exist yet.
 
 | # | Assigned | Done | Where it actually stands |
 |---|---|---|---|
-| 1 | Sign off on `schemas/` by day 3 | ❌ | **No `schemas/` package exists in the repo at all.** Not mine alone to fix, but it is *the* hard serialization point and it has slipped past day 3. I build against my own `types.py` and the rollout projection in `generation.py` — which means my row shape is unratified. |
-| 2 | Sweep runner, rollout store, resume, cost model | ✅ | End to end, 270 tests green in ~80 s, no GPU and no network |
+| 1 | Sign off on `schemas/` by day 3 | ✅ | The package landed (R4, 19 commits) and `schemas/tests/test_conformance.py` binds my row shape to it directly — version, required fields, `finish_reason` and `mode` vocabularies, and `rollout_id` derivation are all asserted against `generation.py`. **My row shape is now ratified by a test rather than by agreement.** It landed past day 3 and without a four-role sign-off, so the process clause failed even though the artifact is right. |
+| 2 | Sweep runner, rollout store, resume, cost model | ✅ | End to end, 270 tests green in ~23 s, no GPU and no network |
 | 3 | vLLM at TP=1, 1.5B on GPU0 / 7B on GPU1 | ❌ | `vllm_offline` and `vllm_openai` backends are written and exercised against `mock`. Neither has been pointed at a real vLLM process. |
-| 4 | 200-task pilot sweep → R2 for grading | ❌ | **Blocked on R2's task manifest** — no `data/tasks/*.jsonl` exists. `corpus.py` reads it the moment it lands; this is my only cross-role dependency and it is still open. |
+| 4 | 200-task pilot sweep → R2 for grading | ❌ | **Blocked on R2's task manifest** — there is no `data/` directory at all. `corpus.py` reads it the moment it lands; this is my only cross-role dependency and it is still open. |
 | 5 | First characterization pass → `cost_coefficients.json` | ❌ | `characterize.py` and the coefficient fit are written and tested. There is no `bench/cost_coefficients.json`. The coefficients do not exist. |
 | 6 | Measure `cold_start_s` for both models | ❌ | Needs a real vLLM startup to time. Nothing to report. |
 
@@ -288,8 +288,10 @@ estimate. Every cost number downstream is built on it.
 | `impute.py` | Cost sidecars — re-costing never rewrites a row |
 | `cli.py` | `orch-workers` |
 
-270 tests in `bench/tests`, no GPU and no network, ~80 s. The pipeline is
-exercised end to end on every commit rather than when someone remembers.
+270 tests in `bench/tests`, no GPU and no network, ~23 s. The pipeline is
+exercised end to end on every commit rather than when someone remembers — though
+"on every commit" is currently a local habit, not a CI job: see
+[CONTRIBUTING](./CONTRIBUTING.md) → *What is not enforced yet*.
 
 ### Decisions worth arguing with
 

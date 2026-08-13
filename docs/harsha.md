@@ -151,13 +151,22 @@ Output:  policy.pkl + decisions.parquet, one per (policy, λ)
 
 ---
 
-## Week 1 (Phase 0)
+## Week 1 (Phase 0) — status at 13 Aug 2026
 
-- [ ] Sign off on `schemas/` by day 3
-- [ ] Synthetic rollout generator with planted signal + adversarial fixtures
-- [ ] D0 and D1 feature builders, each feature declaring its decision point
-- [ ] Recover the planted signal end to end
-- [ ] Measure `AUC_D0` and `AUC_D1` on the pilot the moment R2 grades it
+**`src/orchestrator/policy/` does not exist.** No R3 code has been committed, so
+every item below is unstarted rather than in progress.
+
+| | Item | Where it stands |
+|---|---|---|
+| ❌ | Sign off on `schemas/` by day 3 | The package landed from R4 without R3 review. The contract R3 must consume is frozen and unratified by this seat. |
+| ✅ | Synthetic rollout generator with planted signal + adversarial fixtures | Delivered by R4 as `schemas/synth.py` and `schemas/adversarial.py`, not by R3 — the fixtures exist, so **nothing here blocks the start** |
+| ❌ | D0 and D1 feature builders, each feature declaring its decision point | Not written |
+| ❌ | Recover the planted signal end to end | Not written. The planted signal is documented at `AUC_D0 ≈ 0.62–0.69` in `synth.py`, so the target is known and unclaimed. |
+| ❌ | Measure `AUC_D0` and `AUC_D1` on the pilot | Blocked twice over — no feature builder, and no graded pilot |
+
+The honest read: R3 is the one seat with **no blocker and no output**. R4 built
+the fixtures that were supposed to remove the excuse for waiting on hardware, and
+they have been available since they landed.
 
 ---
 

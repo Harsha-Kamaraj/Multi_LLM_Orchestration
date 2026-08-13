@@ -15,25 +15,32 @@ tracked in this repo. Per-role breakdowns: [guru](./guru.md) · [diya](./diya.md
 Establish the shared schemas and find out whether the premise holds before
 anyone commits four weeks to it.
 
-**Deliverables**
+**Deliverables — status at 13 Aug 2026**
 
-- `schemas/` frozen: `Task` and `Rollout` JSON schemas, signed off by all four roles
-- Synthetic rollout generator emitting schema-valid rows with a planted, known-strength signal
-- 200-task pilot sweep (small ×3 seeds, large ×3 seeds), fully graded
-- Oracle-gap study
-- Power calculation off measured discordance rates
+| | Deliverable | Owner |
+|---|---|---|
+| ✅ | `schemas/` frozen: `Task` and `Rollout` JSON schemas | R4 |
+| ✅ | Synthetic rollout generator emitting schema-valid rows with a planted, known-strength signal | R4 |
+| ❌ | Sign-off from all four roles on the frozen schema — landed unilaterally, past the day-3 deadline | all |
+| ❌ | 200-task pilot sweep (small ×3 seeds, large ×3 seeds), fully graded — no `data/tasks/`, no GPU run | R1 · R2 |
+| ❌ | Oracle-gap study — `eval.oracle_headroom()` is implemented, but there is no pilot to run it on | R4 |
+| ❌ | Power calculation off measured discordance rates — `eval.mcnemar_sample_size()` exists; the discordance rate does not | R4 |
 
 **Gate — measure all four, hard stop if `AUC_D1` fails**
 
-| Quantity | Definition | Threshold | If it fails |
-|---|---|---|---|
-| `A_large − A_small` | pass@1 difference between arms | ≥ 8 pp | Arms aren't differentiated — shrink the small model |
-| `A_oracle − A_large` | headroom above the best single arm | ≥ 5 pp | Large model dominates; only cost savings available, not accuracy |
-| `AUC_D0` | predicting "small solves" from **prompt-only** features | ≥ 0.65 | Pre-generation routing is dead. Move to D1 — expected, not fatal |
-| `AUC_D1` | same, from **post-generation** features | ≥ 0.75 | **Hard stop.** Neither decision point has signal; the premise is false |
+| Measured | Quantity | Definition | Threshold | If it fails |
+|---|---|---|---|---|
+| ❌ | `A_large − A_small` | pass@1 difference between arms | ≥ 8 pp | Arms aren't differentiated — shrink the small model |
+| ❌ | `A_oracle − A_large` | headroom above the best single arm | ≥ 5 pp | Large model dominates; only cost savings available, not accuracy |
+| ❌ | `AUC_D0` | predicting "small solves" from **prompt-only** features | ≥ 0.65 | Pre-generation routing is dead. Move to D1 — expected, not fatal |
+| ❌ | `AUC_D1` | same, from **post-generation** features | ≥ 0.75 | **Hard stop.** Neither decision point has signal; the premise is false |
 
 Expect `AUC_D0 ≈ 0.60–0.68` and `AUC_D1 ≈ 0.80–0.90`. That asymmetry is the most
 important number in the project and it should drive the architecture.
+
+**Phase 0 has not passed.** No gate quantity has a value, so nothing below is
+formally unblocked — Phase 1 work that has landed did so against fixtures, which
+is the design, not an exception to the gate.
 
 ---
 
@@ -41,20 +48,23 @@ important number in the project and it should drive the architecture.
 
 The minimum system that produces a defensible result. Nothing outside this list ships.
 
-**Deliverables**
+**Deliverables — status at 13 Aug 2026**
 
-- Qwen2.5-Coder-1.5B on GPU0 and 7B on GPU1, **TP=1 both**, plus a characterization
-  pass producing cost coefficients, `warm_latency_s`, and `cold_start_s`
-- 1,000 tasks from MBPP+ / HumanEval+, split 60/20/20 at task level, manifest hashed and committed
-- Frozen-ladder sweep: 6 generations per task (small ×3, large ×3), all graded, all logged to Parquet
-- Calibrated `P(pass | x, arm)` at D0 and D1, plus cost and latency regressors
-- λ-sweep producing the cost–accuracy frontier
-- Seven baselines: `always_small`, `always_large`, `random_route(p)`, **`heuristic_route`**,
-  `best_of_n_small`, `verifier_gated_cascade`, `oracle_router`
-- Paired bootstrap CIs and McNemar tests on the frozen test split, opened exactly once
+| | Deliverable | Owner |
+|---|---|---|
+| ❌ | Qwen2.5-Coder-1.5B on GPU0 and 7B on GPU1, **TP=1 both** — both backends written and exercised against `mock`, neither pointed at a real vLLM process | R1 |
+| ❌ | Characterization pass producing cost coefficients, `warm_latency_s`, `cold_start_s` — `characterize.py` is written and tested; `bench/cost_coefficients.json` does not exist | R1 |
+| ❌ | 1,000 tasks from MBPP+ / HumanEval+, split 60/20/20, manifest hashed and committed — there is no `data/` directory | R2 · R4 |
+| ❌ | Frozen-ladder sweep: 6 generations per task, all graded, all logged to Parquet — the runner is tested end to end against a mock, and has never swept | R1 |
+| ❌ | Calibrated `P(pass \| x, arm)` at D0 and D1, plus cost and latency regressors — `src/orchestrator/policy/` does not exist | R3 |
+| ❌ | λ-sweep producing the cost–accuracy frontier — the evaluator side (`eval.sweep`, `eval.pareto_front`) is ✅; the policy that feeds it is ❌ | R3 |
+| ✅ | Seven baselines: `always_small`, `always_large`, `random_route(p)`, **`heuristic_route`**, `best_of_n_small`, `verifier_gated_cascade`, `oracle_router` — all implemented against fixtures | R4 |
+| ✅ | Paired bootstrap CIs and McNemar tests — implemented and validated on the planted signal | R4 |
+| ❌ | …run on the frozen test split, opened exactly once — `unlock_test_split()` guards it; the split does not exist and has never been opened | R4 |
 
 **Gate:** policy beats `verifier_gated_cascade` on at least one frontier region,
-with a confidence interval excluding zero.
+with a confidence interval excluding zero. **Not evaluated** — there is no policy
+and no rollout store.
 
 **Second gate, equally binding:** `learned_D0` beats a *properly tuned*
 `heuristic_route` on the same region. If it doesn't, the learned policy hasn't

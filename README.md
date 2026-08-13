@@ -64,6 +64,38 @@ finding** — the learned policy did not earn its complexity, and the report say
 
 ---
 
+## Status — 13 Aug 2026
+
+Phase 0, week 1. **Every number above is a target, not a measurement.** Nothing
+has run on a GPU, no task corpus exists, and not one gate has been evaluated.
+
+| Deliverable | Owner | State |
+|---|---|---|
+| `schemas/` — `Task` + `Rollout` contracts, version guards, validation | R4 | ✅ |
+| Synthetic rollout generator with a planted signal + adversarial fixtures | R4 | ✅ |
+| Sweep runner, rollout store, resume, cost model, code extraction | R1 | ✅ built · ❌ never on a GPU |
+| Baselines, cluster bootstrap, McNemar, BH, matched-cost frontier, confusion matrix | R4 | ✅ |
+| Task corpus `data/tasks/` — **blocks R1's sweep** | R2 | ❌ |
+| Docker grader end to end, visible/hidden split, hack detection | R2 | ❌ |
+| Frozen splits `data/splits/` | R4 | ❌ |
+| Policy — feature builders, value heads, calibration, λ-sweep | R3 | ❌ |
+| CI (`.github/workflows/`) | infra | ❌ |
+
+**Phase 0 gate — all four quantities are unmeasured:**
+
+| Quantity | Threshold | Measured |
+|---|---|---|
+| `A_large − A_small` | ≥ 8 pp | ❌ |
+| `A_oracle − A_large` | ≥ 5 pp | ❌ |
+| `AUC_D0` | ≥ 0.65 | ❌ |
+| `AUC_D1` | ≥ 0.75 | ❌ |
+
+430 tests pass — `bench/tests` (270), `eval/tests` (110), `schemas/tests` (50) —
+with no GPU and no network, in ~75 s. That is a statement about code, not about
+the claim this project exists to test.
+
+---
+
 ## Start here
 
 | If you are… | Read |
