@@ -67,6 +67,23 @@ def graded(gen: Generation, *, hidden_passed: int = 8, hidden_total: int = 8,
     return row
 
 
+def two_arm_rows(n_tasks: int = 4, *, seeds: tuple[int, ...] = (0,),
+                 **grade: Any) -> list[dict[str, Any]]:
+    """A realistic store: every task ran on both arms.
+
+    The frozen Phase 1 ladder is two arms, and the integrity checks refuse a
+    single-arm store — with one arm there is no routing decision to make, so a
+    fixture built from one would be testing the loader against a shape the
+    project never produces.
+    """
+    return [
+        graded(make_generation(i, arm=arm, seed=seed), **grade)
+        for i in range(n_tasks)
+        for arm in ("direct_small", "direct_large")
+        for seed in seeds
+    ]
+
+
 def write_run(root: Path, rows: list[dict[str, Any]], *, run_id: str = RUN_ID,
               sealed: bool = True, publishable: bool = True) -> Path:
     """Write a run directory by hand, so a test can control every byte.
@@ -128,22 +145,24 @@ def graded_run(tmp_path: Path) -> Path:
 def test_reads_a_run_written_and_sealed_by_r1(tmp_path: Path):
     """The drift canary. If R1's layout changes, this is where R3 finds out."""
     with RolloutStore(tmp_path, RUN_ID).open(config={"note": "test"}) as rollouts:
-        for i in range(6):
-            rollouts.append(make_generation(i))
+        for i in range(3):
+            for arm in ("direct_small", "direct_large"):
+                rollouts.append(make_generation(i, arm=arm))
         rollouts.seal()
 
     data = store.load_rollouts(tmp_path, RUN_ID, require_grades=False)
     assert len(data) == 6
     assert data.run_id == RUN_ID
-    assert data.arms == ("direct_small",)
+    assert sorted(data.arms) == ["direct_large", "direct_small"]
 
 
 def test_parquet_and_jsonl_read_the_same_run_identically(tmp_path: Path):
     """Without this, a result reproduces on one machine and not another."""
     pytest.importorskip("pyarrow")
     with RolloutStore(tmp_path, RUN_ID).open() as rollouts:
-        for i in range(6):
-            rollouts.append(make_generation(i))
+        for i in range(3):
+            for arm in ("direct_small", "direct_large"):
+                rollouts.append(make_generation(i, arm=arm))
         manifest = rollouts.seal()
     assert manifest["parquet"], "R1 did not write a Parquet view to compare"
 
@@ -161,7 +180,7 @@ def test_parquet_and_jsonl_read_the_same_run_identically(tmp_path: Path):
 
 
 def test_refuses_an_unsealed_run(tmp_path: Path):
-    write_run(tmp_path, [graded(make_generation(0))], sealed=False)
+    write_run(tmp_path, two_arm_rows(1), sealed=False)
     with pytest.raises(StoreReadError, match="_MANIFEST"):
         store.load_rollouts(tmp_path, RUN_ID)
 
@@ -188,15 +207,19 @@ def test_there_is_no_flag_that_opens_the_test_split():
 
 def test_refuses_an_ungraded_run_by_default(tmp_path: Path):
     """Every real row in the repo today is in exactly this state."""
-    write_run(tmp_path, [make_generation(i).to_row() for i in range(4)])
+    write_run(tmp_path, [make_generation(i, arm=a).to_row()
+                         for i in range(4)
+                         for a in ("direct_small", "direct_large")])
     with pytest.raises(UngradedRunError, match="no hidden-test outcome"):
         store.load_rollouts(tmp_path, RUN_ID)
 
 
 def test_an_ungraded_run_can_still_be_inspected(tmp_path: Path):
-    write_run(tmp_path, [make_generation(i).to_row() for i in range(4)])
+    write_run(tmp_path, [make_generation(i, arm=a).to_row()
+                         for i in range(4)
+                         for a in ("direct_small", "direct_large")])
     data = store.load_rollouts(tmp_path, RUN_ID, require_grades=False)
-    assert len(data) == 4
+    assert len(data) == 8
     assert data.labels == {}
 
 
@@ -243,7 +266,7 @@ def test_no_costing_is_attached_unless_one_is_pinned(graded_run: Path):
 
 
 def test_a_pinned_costing_joins_by_rollout_id(tmp_path: Path):
-    rows = [graded(make_generation(i)) for i in range(4)]
+    rows = two_arm_rows(4)
     write_run(tmp_path, rows)
     write_cost(tmp_path, rows, "abc12345")
 
@@ -254,7 +277,7 @@ def test_a_pinned_costing_joins_by_rollout_id(tmp_path: Path):
 
 
 def test_a_costing_that_does_not_exist_lists_the_ones_that_do(tmp_path: Path):
-    rows = [graded(make_generation(0))]
+    rows = two_arm_rows(1)
     write_run(tmp_path, rows)
     write_cost(tmp_path, rows, "abc12345")
     with pytest.raises(StoreReadError, match="abc12345"):
@@ -263,7 +286,7 @@ def test_a_costing_that_does_not_exist_lists_the_ones_that_do(tmp_path: Path):
 
 def test_costings_are_listed_not_resolved(tmp_path: Path):
     """Two costings of one run coexist, so 'the cost' is not a request."""
-    rows = [graded(make_generation(0))]
+    rows = two_arm_rows(1)
     write_run(tmp_path, rows)
     write_cost(tmp_path, rows, "a100feed")
     write_cost(tmp_path, rows, "h100beef")
@@ -293,7 +316,7 @@ def write_tasks(tmp_path: Path, n: int = 4, *, with_hidden: bool = True) -> Path
 
 
 def test_the_task_join_supplies_the_prompt_the_row_does_not_carry(tmp_path: Path):
-    rows = [graded(make_generation(i)) for i in range(4)]
+    rows = two_arm_rows(4)
     write_run(tmp_path, rows)
     tasks = write_tasks(tmp_path)
 
@@ -305,7 +328,7 @@ def test_the_task_join_supplies_the_prompt_the_row_does_not_carry(tmp_path: Path
 
 def test_the_task_join_leaves_the_hidden_suite_and_the_solution_behind(tmp_path: Path):
     """The join adds exactly three fields. The full suite is not one of them."""
-    rows = [graded(make_generation(i)) for i in range(4)]
+    rows = two_arm_rows(4)
     write_run(tmp_path, rows)
     tasks = write_tasks(tmp_path)
 
@@ -319,7 +342,7 @@ def test_the_task_join_leaves_the_hidden_suite_and_the_solution_behind(tmp_path:
 
 
 def test_a_corpus_that_does_not_match_the_run_is_refused(tmp_path: Path):
-    rows = [graded(make_generation(i)) for i in range(4)]
+    rows = two_arm_rows(4)
     write_run(tmp_path, rows)
     tasks = write_tasks(tmp_path, n=2)
     with pytest.raises(StoreReadError, match="does not match"):
@@ -330,42 +353,42 @@ def test_a_corpus_that_does_not_match_the_run_is_refused(tmp_path: Path):
 
 
 def test_only_the_requested_splits_come_back(tmp_path: Path):
-    rows = [graded(make_generation(0, split="train")),
-            graded(make_generation(1, split="val")),
-            graded(make_generation(2, split="test"))]
+    rows = [graded(make_generation(t, arm=a, split=split))
+            for t, split in enumerate(("train", "val", "test"))
+            for a in ("direct_small", "direct_large")]
     write_run(tmp_path, rows)
 
     data = store.load_rollouts(tmp_path, RUN_ID, splits=("val",))
-    assert data.counts_by_split() == {"val": 1}
+    assert data.counts_by_split() == {"val": 2}
     assert "test" not in data.counts_by_split()
 
 
 def test_test_split_rows_are_dropped_even_when_present_in_the_run(tmp_path: Path):
     """R1 generates on the test split today. The rows exist; R3 never sees them."""
-    rows = [graded(make_generation(0, split="train")),
-            graded(make_generation(1, split="test")),
-            graded(make_generation(2, split="test"))]
+    rows = [graded(make_generation(t, arm=a, split=split))
+            for t, split in enumerate(("train", "test", "test"))
+            for a in ("direct_small", "direct_large")]
     write_run(tmp_path, rows)
 
     data = store.load_rollouts(tmp_path, RUN_ID)
-    assert len(data) == 1
-    assert data.labels.keys() == {data.rows[0]["rollout_id"]}
+    assert len(data) == 2
+    assert data.labels.keys() == {r["rollout_id"] for r in data.rows}
 
 
 def test_a_torn_final_line_is_skipped(tmp_path: Path):
-    rows = [graded(make_generation(i)) for i in range(3)]
+    rows = two_arm_rows(3)
     write_run(tmp_path, rows)
     part = next((tmp_path / RUN_ID / "generations").glob("part-*.jsonl"))
     with part.open("a", encoding="utf-8") as fh:
         fh.write('{"task_id": "mbpp/9", "arm": "dir')
 
     data = store.load_rollouts(tmp_path, RUN_ID)
-    assert len(data) == 3
+    assert len(data) == 6
 
 
 def test_a_damaged_middle_line_is_refused(tmp_path: Path):
     """Interrupted is recoverable. Damaged is not, and must not read as a run."""
-    rows = [graded(make_generation(i)) for i in range(3)]
+    rows = two_arm_rows(3)
     write_run(tmp_path, rows)
     part = next((tmp_path / RUN_ID / "generations").glob("part-*.jsonl"))
     lines = part.read_text(encoding="utf-8").splitlines()
@@ -377,7 +400,7 @@ def test_a_damaged_middle_line_is_refused(tmp_path: Path):
 
 
 def test_publishable_follows_the_manifest(tmp_path: Path):
-    rows = [graded(make_generation(0))]
+    rows = two_arm_rows(1)
     write_run(tmp_path, rows, publishable=False)
     assert store.load_rollouts(tmp_path, RUN_ID).publishable is False
 
