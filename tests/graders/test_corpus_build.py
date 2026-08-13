@@ -12,6 +12,7 @@ from orchestrator.graders.corpus_build import (
     contamination_filter,
     to_task_record,
 )
+from orchestrator.graders.base import TestResult
 from orchestrator.graders.pytest_grader import PytestGrader
 from orchestrator.types import Task
 from schemas import validate_task
@@ -44,6 +45,40 @@ FLOAT_PROBLEM = {
     "base_input": [[10.0]],
     "plus_input": [[3.0]],
     "atol": 0.001,
+}
+
+TEST_PREFIXED_PROBLEM = {
+    "task_id": "Test/5",
+    "prompt": "def test_duplicate(arraynums):\n    \"\"\"Any duplicates?\"\"\"\n",
+    "entry_point": "test_duplicate",
+    "canonical_solution": "    return len(arraynums) != len(set(arraynums))\n",
+    "base_input": [[[1, 2, 3]], [[1, 1, 2]]],
+    "plus_input": [[[]]],
+    "atol": 0,
+}
+
+NONDETERMINISTIC_PROBLEM = {
+    "task_id": "Test/6",
+    "prompt": "def flaky(x):\n    \"\"\"Returns this process's pid — guaranteed to differ\n    between two independently spawned processes.\"\"\"\n",
+    "entry_point": "flaky",
+    "canonical_solution": "    import os\n    return os.getpid()\n",
+    "base_input": [[1]],
+    "plus_input": [],
+    "atol": 0,
+}
+
+INF_PROBLEM = {
+    "task_id": "Test/4",
+    "prompt": "def ratio(nums):\n    \"\"\"Ratio of zero to nonzero, or inf if all zero.\"\"\"\n",
+    "entry_point": "ratio",
+    "canonical_solution": (
+        "    if all(x == 0 for x in nums):\n"
+        "        return float('inf')\n"
+        "    return sum(x == 0 for x in nums) / sum(x != 0 for x in nums)\n"
+    ),
+    "base_input": [[[1, 0]]],
+    "plus_input": [[[0, 0, 0]]],  # canonical returns float('inf') here
+    "atol": 0.0001,
 }
 
 
@@ -103,6 +138,72 @@ def test_float_tolerance_is_respected():
     # Off by less than atol (0.001) — must still pass.
     grade = grader.grade(task, "def half(a):\n    return a / 2 + 0.0001\n")
     assert grade.hidden.all_passed
+
+
+def test_infinite_expected_value_renders_as_valid_python():
+    """`repr(float('inf'))` is the bare word `inf` — not a Python literal.
+    A generated assertion built from it compiles but then raises
+    NameError, which is indistinguishable from an ordinary wrong answer in
+    the pass count. The correct (canonical) solution must actually solve
+    the generated test, not merely produce source that parses."""
+    record = to_task_record(INF_PROBLEM, "testset")
+    assert "float('inf')" in record["hidden_tests"]
+    assert "candidate(*[[0, 0, 0]]), float('inf')" in record["hidden_tests"]
+
+    task = Task(
+        task_id=record["task_id"], prompt=record["prompt"],
+        entrypoint=record["entrypoint"], tests=record["tests"],
+        metadata={"visible_tests": record["visible_tests"]},
+    )
+    grader = PytestGrader(backend="subprocess")
+    canonical = INF_PROBLEM["prompt"] + INF_PROBLEM["canonical_solution"]
+    grade = grader.grade(task, canonical)
+    assert grade.solved
+
+
+def test_entry_point_named_like_a_test_is_imported_aliased():
+    """Importing `test_duplicate` under its own name would put a `test_*`
+    name at module scope; pytest collects any such name, not only functions
+    it defines, and would try to run the candidate itself as a bogus second
+    test with a required argument it can't supply — inflating the total and
+    reporting a false failure on every task shaped this way."""
+    record = to_task_record(TEST_PREFIXED_PROBLEM, "testset")
+    assert "as _candidate_fn" in record["hidden_tests"]
+    assert "from solution import test_duplicate\n" not in record["hidden_tests"]
+
+    task = Task(
+        task_id=record["task_id"], prompt=record["prompt"],
+        entrypoint=record["entrypoint"], tests=record["tests"],
+        metadata={"visible_tests": record["visible_tests"]},
+    )
+    grader = PytestGrader(backend="subprocess")
+    canonical = TEST_PREFIXED_PROBLEM["prompt"] + TEST_PREFIXED_PROBLEM["canonical_solution"]
+    grade = grader.grade(task, canonical)
+    assert grade.hidden == TestResult(1, 1)  # exactly one collected test, not two
+    assert grade.solved
+
+
+def test_empty_tuple_renders_as_valid_python():
+    """`repr(())` round-trips fine, but the tuple branch used to special
+    case a one-element tuple's trailing comma unconditionally — `(elem,)`
+    for one element, `(,)` for zero, and `(,)` is not valid Python."""
+    from orchestrator.graders.corpus_build import _literal
+    assert _literal(()) == "()"
+    assert eval(_literal(())) == ()
+    assert eval(_literal((1,))) == (1,)
+    assert eval(_literal((1, 2))) == (1, 2)
+
+
+def test_cross_process_unstable_case_is_dropped():
+    """A canonical solution whose result depends on which process ran it
+    (the real-world case: `tuple(set(strings))`, order-sensitive to
+    PYTHONHASHSEED) must not silently poison the corpus with an expected
+    value that only holds in this build process. `flaky`'s pid-based
+    result is guaranteed to disagree between the two independent runs
+    `_run_reference` performs, so its one case is dropped, base_cases ends
+    up empty, and the task is correctly unconvertible rather than shipped
+    with a value the grading sandbox can never reproduce."""
+    assert to_task_record(NONDETERMINISTIC_PROBLEM, "testset") is None
 
 
 def test_contamination_filter_drops_duplicates():
