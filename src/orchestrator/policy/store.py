@@ -43,6 +43,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
+from schemas.validate import rollout_schema
+
 from ..workers.store import MANIFEST_NAME, PARQUET_NAME, ROWS_DIR
 from . import contract
 from .errors import SplitError, StoreReadError, UngradedRunError
@@ -50,9 +52,18 @@ from .errors import SplitError, StoreReadError, UngradedRunError
 #: Where R1's imputation pass writes cost sidecars, one per coefficient set.
 COST_DIR = "cost"
 
+#: The split vocabulary, read out of the ratified schema itself.
+_SCHEMA_SPLITS: tuple[str, ...] = tuple(
+    rollout_schema()["properties"]["split"]["enum"]
+)
+
 #: The splits R3 is entitled to. `test` is absent, and its absence is the
 #: enforcement — see the module docstring.
-ALLOWED_SPLITS: frozenset[str] = frozenset({"train", "val", "validation"})
+#:
+#: Derived from the schema's own enum rather than written out, so a contract
+#: change that adds a split cannot leave this list quietly stale. Only `test`
+#: is subtracted, and only here.
+ALLOWED_SPLITS: frozenset[str] = frozenset(_SCHEMA_SPLITS) - {"test"}
 
 #: The only fields that cross from R2's task manifest into a feature path.
 #: `Task.tests` holds the full suite and is left behind; so is any reference

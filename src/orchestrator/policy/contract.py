@@ -1,11 +1,9 @@
 """The rollout row, as R3 reads it.
 
-This module is R3's defensive copy of a contract that has not been ratified.
-`schemas/` does not exist yet, so the row shape is whatever
-`workers.generation.Generation.to_row()` emits — R1 has said as much in their
-own status notes. Pinning it here, in one file, means the eventual swap to a
-frozen `schemas/` package is a small diff in a known place rather than a search
-through every module that touched a column name.
+`schemas/` is now the ratified contract, so this module no longer restates it.
+Row validity and schema versioning are delegated there — two sources of truth
+for a contract is the same as none. What stays here is the part `schemas/` does
+not model and R3 owns: **which columns are readable at which decision point.**
 
 Three things this file decides, and they are not stylistic:
 
@@ -33,7 +31,8 @@ Worth stating plainly, because it contradicts the shorthand that R3's input is
 "the rollout store and nothing else": **the rollout row carries no prompt.** It
 carries `text` and `code` — what the model produced — and the `task_id` that
 produced them. Every prompt-only D0 feature (length, visible-test count,
-keyword structure) is therefore uncomputable from the store alone.
+keyword structure) is therefore uncomputable from the store alone. This is a
+property of the ratified schema, not of R1's draft, and it is open with R4.
 
 The second input is R2's task manifest, joined by `task_id`. It is a data
 artifact, not another role's code, and the join is explicit and prefixed
@@ -48,12 +47,15 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Mapping
 
+from schemas.version import SUPPORTED_VERSIONS, check_version
+from schemas.version import SchemaVersionError as ContractSchemaVersionError
+
 from .errors import ContractError, SchemaVersionError
 
-# Schema versions this code was written against. A row carrying anything else
-# is refused rather than read optimistically: the failure mode of guessing is a
-# column whose meaning changed under a name that did not.
-SUPPORTED_SCHEMA_VERSIONS: frozenset[int] = frozenset({1})
+# Re-exported under R3's older name so callers keep working, but the values
+# come from the contract package. R3 does not get an opinion about which
+# schema versions exist.
+SUPPORTED_SCHEMA_VERSIONS: frozenset[int] = SUPPORTED_VERSIONS
 
 # ---------------------------------------------------------------------------
 # Column groups
@@ -274,14 +276,14 @@ def normalize_row(row: Mapping[str, Any], *, where: str = "row") -> dict[str, An
                 f"present columns are {sorted(out)}"
             )
 
+    # Delegated to the contract package rather than restated. R3 does not get
+    # to hold a second opinion about which versions are readable — that is the
+    # mixed-store bug arriving through the door marked "compatibility".
     version = _coerce_int(out["schema_version"], "schema_version", where)
-    if version not in SUPPORTED_SCHEMA_VERSIONS:
-        raise SchemaVersionError(
-            f"{where}: schema_version {version} is not one this code was "
-            f"written against ({sorted(SUPPORTED_SCHEMA_VERSIONS)}). A column's "
-            f"meaning may have changed under a name that did not."
-        )
-    out["schema_version"] = version
+    try:
+        out["schema_version"] = check_version(version, where=where)
+    except ContractSchemaVersionError as exc:
+        raise SchemaVersionError(str(exc)) from None
 
     for column in _INT_COLUMNS:
         if column in out:
