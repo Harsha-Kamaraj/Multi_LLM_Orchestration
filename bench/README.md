@@ -4,7 +4,7 @@ Everything R1 runs is one command. A sweep that needs a checklist gets run
 inconsistently, and two runs that differ in a step nobody wrote down are two
 experiments sharing a `run_id`.
 
-Role doc: [guru.md](../guru.md) · Contracts: [CONTRIBUTING](../CONTRIBUTING.md)
+Role doc: [guru.md](../docs/guru.md) · Contracts: [CONTRIBUTING](../docs/CONTRIBUTING.md)
 
 ```sh
 pip install -e .
