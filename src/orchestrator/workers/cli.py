@@ -111,6 +111,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="fit cost/latency coefficients on a serving backend",
     )
     char.add_argument("--out", type=Path, default=DEFAULT_COEFFICIENTS_PATH)
+    char.add_argument("--roles", nargs="+", default=["small", "large"],
+                      choices=["small", "large"],
+                      help="rungs to measure. One server hosts one model, so "
+                           "characterize the rung whose weights are actually "
+                           "resident; the others are carried over from --out")
     char.add_argument("--concurrency", nargs="+", type=int, default=[1, 8],
                       help="declared in-flight request counts to measure")
     char.add_argument("--hardware", default="unspecified",
@@ -202,6 +207,7 @@ def _cmd_characterize(args: argparse.Namespace) -> int:
     try:
         result = run_and_save(
             backend, args.out,
+            roles=tuple(args.roles),
             concurrencies=tuple(args.concurrency),
             probes=build_probes(repeats=args.repeats),
             hardware=args.hardware,

@@ -21,7 +21,7 @@ assumed, and so a serving deployment at concurrency 8 has a number of its own.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -294,14 +294,34 @@ def characterize(backend: Backend, *,
     )
 
 
-def run_and_save(backend: Backend, path: Path | str, **kwargs: Any) -> CharacterizationResult:
+def run_and_save(backend: Backend, path: Path | str, *, merge: bool = True,
+                 **kwargs: Any) -> CharacterizationResult:
     """Characterize and write `cost_coefficients.json`.
 
     The file is written even when validation fails, and the caller is expected
     to surface that. Withholding a failing fit hides the diagnosis: a low
     R-squared is information about the serving stack, and the coefficients are
     what someone needs in order to investigate it.
+
+    Coefficients for models this pass did not touch are carried over rather
+    than dropped. One vLLM server hosts one model, so characterizing an arm
+    means pointing at a server that has only that arm's weights resident — and
+    on a single card the two arms cannot even be resident at once without
+    contending, which would fit the coefficients to queue depth. Both arms
+    therefore land in the file one pass at a time, and overwriting would mean
+    the second pass silently deleted the first.
     """
     result = characterize(backend, **kwargs)
-    result.coefficients.save(path)
+    coefficients = result.coefficients
+    if merge and Path(path).exists():
+        carried = {
+            model: fits
+            for model, fits in CostCoefficients.load(path).models.items()
+            if model not in coefficients.models
+        }
+        if carried:
+            coefficients = replace(
+                coefficients, models={**carried, **coefficients.models},
+            )
+    coefficients.save(path)
     return result

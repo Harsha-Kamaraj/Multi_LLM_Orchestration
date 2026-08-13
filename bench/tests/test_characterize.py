@@ -158,3 +158,23 @@ def test_the_report_is_human_readable():
                           require_exact_tokens=False)
     text = result.report()
     assert "mock-small" in text and "R^2" in text and "ms/tok" in text
+
+
+def test_characterizing_one_role_carries_the_other_over(tmp_path):
+    """One vLLM server hosts one model, and on a single card the two arms
+    cannot both be resident without contending — which would fit coefficients
+    to queue depth. Each arm is measured in its own pass, so a pass must not
+    delete the arm it did not measure."""
+    from orchestrator.workers.cost import CostCoefficients
+
+    out = tmp_path / "cost_coefficients.json"
+    probes = build_probes(repeats=6)
+    backend = serving_backend()
+
+    run_and_save(backend, out, roles=("small",), probes=probes,
+                 concurrencies=(1,), require_exact_tokens=False)
+    assert set(CostCoefficients.load(out).models) == {"mock-small"}
+
+    run_and_save(backend, out, roles=("large",), probes=probes,
+                 concurrencies=(1,), require_exact_tokens=False)
+    assert set(CostCoefficients.load(out).models) == {"mock-small", "mock-large"}
