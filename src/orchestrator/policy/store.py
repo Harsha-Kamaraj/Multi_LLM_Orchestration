@@ -39,7 +39,7 @@ a rule anyone has to remember, and not one a new code path can quietly skip.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
@@ -64,6 +64,17 @@ _SCHEMA_SPLITS: tuple[str, ...] = tuple(
 #: change that adds a split cannot leave this list quietly stale. Only `test`
 #: is subtracted, and only here.
 ALLOWED_SPLITS: frozenset[str] = frozenset(_SCHEMA_SPLITS) - {"test"}
+
+#: Keys the synthetic generator rides along under `extra` so tests can assert
+#: against them. `_synth_difficulty` is the latent value no policy can observe;
+#: reading it is leakage, and R4's audit checks for exactly this key.
+#:
+#: They are stripped off every row at load and parked in `RolloutData.latent`,
+#: which is the same treatment labels get and for the same reason: a feature
+#: builder is handed `.rows`, so what is not in `.rows` cannot be read by
+#: accident. Leaving them in `extra` and trusting nobody to look would make
+#: R4's canary a test of R3's discipline rather than of R3's code.
+LATENT_PREFIX = "_synth_"
 
 #: The only fields that cross from R2's task manifest into a feature path.
 #: `Task.tests` holds the full suite and is left behind; so is any reference
@@ -106,9 +117,18 @@ class RolloutData:
     source: str
     cost_fingerprint: str | None = None
     tasks_path: str | None = None
+    #: Planted ground truth on a synthetic run, keyed by `rollout_id`. Empty on
+    #: a real one. Held here rather than on the row so that a test can assert
+    #: against the planted signal while a feature builder structurally cannot
+    #: read it.
+    latent: Mapping[str, dict[str, Any]] = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.rows)
+
+    @property
+    def is_synthetic(self) -> bool:
+        return bool(self.latent)
 
     @property
     def publishable(self) -> bool:
@@ -384,6 +404,7 @@ def load_rollouts(root: Path | str, run_id: str, *,
 
     rows: list[dict[str, Any]] = []
     labels: dict[str, Label] = {}
+    latent: dict[str, dict[str, Any]] = {}
     seen_versions: set[int] = set()
     n_total = 0
     n_ungraded = 0
@@ -414,6 +435,17 @@ def load_rollouts(root: Path | str, run_id: str, *,
         # whatever any downstream code decides to do with it.
         for column in contract.LABEL_COLUMNS:
             row.pop(column, None)
+
+        # Same treatment for the fixture's planted ground truth, which rides
+        # along under `extra` and is unobservable to any real policy.
+        extra = row.get("extra") or {}
+        planted = {k: v for k, v in extra.items() if k.startswith(LATENT_PREFIX)}
+        if planted:
+            latent[rollout_id] = {
+                k[len(LATENT_PREFIX):]: v for k, v in planted.items()
+            }
+            row["extra"] = {k: v for k, v in extra.items()
+                            if not k.startswith(LATENT_PREFIX)}
 
         if costs:
             priced = costs.get(rollout_id)
@@ -472,4 +504,5 @@ def load_rollouts(root: Path | str, run_id: str, *,
         source=source,
         cost_fingerprint=cost_fingerprint,
         tasks_path=str(tasks_path) if tasks_path is not None else None,
+        latent=latent,
     )
