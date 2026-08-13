@@ -13,6 +13,23 @@ orch-workers --help
 
 Every subcommand also runs as `python -m orchestrator.workers.cli`.
 
+> **Status — 13 Aug 2026.** Every command on this page is implemented and
+> tested; **none has been run against a GPU or a real task corpus.** Read the
+> pages below as a specification of built behaviour, not as a record of
+> measurements.
+>
+> | | |
+> |---|---|
+> | ✅ | `sweep`, `characterize`, `impute`, `validate`, `runs`, `show`, `extract` — all implemented, 270 tests |
+> | ✅ | The full pipeline exercised end to end against the `mock` backend on every commit |
+> | ❌ | `vllm_offline` / `vllm_openai` pointed at a real vLLM process |
+> | ❌ | `bench/cost_coefficients.json` — the file does not exist, so `impute` has no coefficients to apply |
+> | ❌ | `data/tasks/*.jsonl` — R2's manifest, the one thing blocking a first sweep |
+> | ❌ | Any `runs/` directory. No `run_id` has ever been minted. |
+>
+> The example `run_id`s below (`2026-08-14-a3f91c2-7d4e08`) are illustrative
+> format samples, not real runs.
+
 ---
 
 ## The distinction everything else depends on
@@ -230,7 +247,7 @@ orch-workers extract response.txt --entrypoint add   # debug a prompt
 pytest bench/tests
 ```
 
-No GPU, no network, no API key, a few seconds. The sweep runner, the store,
+No GPU, no network, no API key, ~23 s. The sweep runner, the store,
 resume, sealing, and the cost model are exercised end to end on every commit —
 a pipeline whose only integration test needs a GPU is one that gets tested when
 someone remembers.
