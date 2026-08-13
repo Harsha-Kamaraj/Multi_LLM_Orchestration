@@ -43,12 +43,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
-from schemas.validate import rollout_schema
+from schemas.validate import ValidationError, rollout_schema, validate_rollout
 
 from ..workers.store import MANIFEST_NAME, PARQUET_NAME, ROWS_DIR
 from . import contract, integrity
 from .errors import (
-    SplitError, StoreIntegrityError, StoreReadError, UngradedRunError,
+    ContractError, SplitError, StoreIntegrityError, StoreReadError,
+    UngradedRunError,
 )
 
 #: Where R1's imputation pass writes cost sidecars, one per coefficient set.
@@ -275,12 +276,30 @@ def _iter_jsonl(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str, 
 
 
 def _iter_parquet(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str, Any]]]:
-    """Stream rows from the derived Parquet view."""
+    """Stream rows from the derived Parquet view.
+
+    `extra` is re-parsed here rather than downstream. R1 serializes it to a
+    JSON string before writing, because Arrow would otherwise infer a struct
+    from the first row and fail on the rest — which means the derived Parquet
+    does not satisfy `rollout.schema.json`, where `extra` is an object, while
+    the authoritative JSONL does.
+
+    Undoing it at the reader is the right place: it is the one point where the
+    two paths differ, so reconciling here is what makes "both paths produce the
+    same rows" true rather than aspirational. Doing it later would mean
+    validating one path against the contract and the other against a variant.
+    """
     import pyarrow.parquet as pq  # type: ignore[import-not-found]
 
     path = run_dir(root, run_id) / ROWS_DIR / PARQUET_NAME
     table = pq.read_table(path)
     for index, row in enumerate(table.to_pylist()):
+        if isinstance(row.get("extra"), str):
+            try:
+                parsed = json.loads(row["extra"])
+            except json.JSONDecodeError:
+                parsed = {"_unparsed": row["extra"]}
+            row["extra"] = parsed if isinstance(parsed, dict) else {"_value": parsed}
         yield f"{PARQUET_NAME}:{index}", row
 
 
@@ -378,6 +397,7 @@ def load_rollouts(root: Path | str, run_id: str, *,
                   cost_fingerprint: str | None = None,
                   tasks_path: Path | str | None = None,
                   require_grades: bool = True,
+                  validate_schema: bool = True,
                   check_integrity: bool = True,
                   skip_checks: Sequence[str] = (),
                   prefer_parquet: bool = True) -> RolloutData:
@@ -393,6 +413,9 @@ def load_rollouts(root: Path | str, run_id: str, *,
             cannot be built, because the rollout row carries no prompt.
         require_grades: refuse a run R2 has not graded. Leave this on unless
             you are inspecting a sweep rather than training on one.
+        validate_schema: check every row against `rollout.schema.json`. Catches
+            per-field violations; the integrity checks catch the cross-field
+            and cross-row ones a schema cannot express.
         check_integrity: run the corruption checks that produce plausible
             numbers rather than exceptions. Turning this off is for inspecting
             a store you already know is broken, never for starting a fit.
@@ -417,6 +440,15 @@ def load_rollouts(root: Path | str, run_id: str, *,
     all_rows: list[dict[str, Any]] = []
     seen_versions: set[int] = set()
     for where, raw in reader(root, run_id):
+        if validate_schema:
+            # Against the raw row, before coercion. Validating the normalized
+            # copy would check R3's coercions rather than the store, and the
+            # two failures need different fixes: one is a bad row, the other is
+            # a bad reader.
+            try:
+                validate_rollout(raw)
+            except ValidationError as exc:
+                raise ContractError(f"{where}: {exc}") from None
         row = contract.normalize_row(raw, where=where)
         seen_versions.add(int(row["schema_version"]))
         all_rows.append(row)
