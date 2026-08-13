@@ -141,7 +141,14 @@ class RolloutData:
         publishable: the recorded git sha does not describe the code that
         produced the rows. Developing against one is fine; reporting from one
         is not, and Phase 6 stamps the decision file accordingly.
+
+        The `-dirty` suffix overrides the manifest rather than being read from
+        it. A manifest is written by the process that produced the run; a
+        run_id is what every consumer already pins. If the two disagree, the
+        one that cannot be quietly regenerated wins.
         """
+        if self.run_id.endswith("-dirty"):
+            return False
         return bool(self.manifest.get("publishable", False))
 
     @property
