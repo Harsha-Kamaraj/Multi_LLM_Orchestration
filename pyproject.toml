@@ -20,6 +20,7 @@ store = ["pyarrow>=16.0"]
 [project.scripts]
 orch = "orchestrator.cli:main"
 orch-workers = "orchestrator.workers.cli:main"
+orch-eval = "eval.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
