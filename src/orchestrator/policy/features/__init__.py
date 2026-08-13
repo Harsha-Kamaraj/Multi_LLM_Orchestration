@@ -21,6 +21,10 @@ __all__ = [
     "FeatureSet",
     "RowView",
     "feature",
+    "D0_FEATURES",
+    "D1_FEATURES",
+    "PROBE_FEATURES",
+    "feature_set",
 ]
 
 from .spec import (
@@ -32,3 +36,28 @@ from .spec import (
     RowView,
     feature,
 )
+from .d0 import D0_FEATURES
+from .d1 import D1_FEATURES, PROBE_FEATURES
+
+
+def feature_set(decision_point: str, *, with_probe: bool = False) -> FeatureSet:
+    """The default feature set for a decision point.
+
+    `with_probe` adds the sibling features. They are off by default because
+    they oblige the policy to pay for the extra draws they read, and a cost
+    that appears without anyone deciding to spend it is how a matched-cost
+    comparison stops being matched.
+    """
+    if decision_point == "D0":
+        if with_probe:
+            raise FeatureError(
+                "the probe features are D1 — they read outcomes of generations "
+                "that have already happened, which is not a thing D0 can do"
+            )
+        return D0_FEATURES
+    if decision_point == "D1":
+        return (D1_FEATURES + PROBE_FEATURES) if with_probe else D1_FEATURES
+    raise FeatureError(
+        f"unknown decision point {decision_point!r}; expected one of "
+        f"{list(DECISION_POINTS)}"
+    )
