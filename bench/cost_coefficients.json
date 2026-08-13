@@ -1,0 +1,32 @@
+{
+  "created_at": "2026-08-13T17:59:08+00:00",
+  "hardware": "NVIDIA RTX 4500 Ada Generation 24GB (WSL2, TP=1)",
+  "models": {
+    "Qwen/Qwen2.5-Coder-1.5B-Instruct": {
+      "1": {
+        "decode_s_per_token": 0.0072761563620843735,
+        "holdout_n": 12,
+        "holdout_r2": 0.9789689016069485,
+        "intercept_s": 0.5533107912878271,
+        "n": 36,
+        "prefill_s_per_token": -0.0001852052162576866,
+        "r2": 0.6482900073301279,
+        "rmse_s": 0.3995415069732335
+      },
+      "8": {
+        "decode_s_per_token": 0.009904913244904164,
+        "holdout_n": 12,
+        "holdout_r2": 0.998970112365987,
+        "intercept_s": 0.019093689880769153,
+        "n": 36,
+        "prefill_s_per_token": 2.5120078161669848e-05,
+        "r2": 0.9995532334852896,
+        "rmse_s": 0.013211409736501933
+      }
+    }
+  },
+  "notes": "USD rate is a stated assumption: nearest cloud equivalent to a 24GB Ada card (A10G-class). Local workstation GPU has no billing rate. cold_start_s reported separately and excluded from the routing objective.",
+  "reference_batch": 1,
+  "usd_per_gpu_hour": 1.0,
+  "version": 1
+}

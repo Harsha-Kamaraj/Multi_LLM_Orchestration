@@ -50,6 +50,12 @@ DEFAULT_CONCURRENCIES: tuple[int, ...] = (1, 8)
 # sample per cell fits the noise as though it were signal.
 DEFAULT_REPEATS = 3
 
+# Untimed requests per (role, concurrency) before observations are collected.
+# Non-zero by default: a cold server's first responses carry one-time costs that
+# are not a function of token counts, and including them is what produced a
+# negative prefill coefficient on the first real measurement.
+DEFAULT_WARMUP = 3
+
 _FILLER = (
     "The function should handle empty input, duplicate elements, and negative "
     "numbers correctly, and should not mutate its arguments. "
@@ -161,6 +167,7 @@ def characterize(backend: Backend, *,
                  usd_per_gpu_hour: float = 0.0,
                  require_exact_tokens: bool = True,
                  threshold: float = 0.9,
+                 warmup: int = DEFAULT_WARMUP,
                  notes: str = "") -> CharacterizationResult:
     """Measure a serving backend and fit its cost coefficients.
 
@@ -208,6 +215,33 @@ def characterize(backend: Backend, *,
         }
 
         for concurrency in concurrencies:
+            # Untimed warmup, discarded. The first requests a fresh server sees
+            # pay one-time costs — kernel autotuning, allocator growth, prefix
+            # cache initialisation — that are not a function of token counts.
+            # Timing them puts a handful of large positive residuals into the
+            # design, and OLS pays for them by bending the coefficients: the
+            # first measured pass fitted prefill at **-0.185 ms/token**, which
+            # says a longer prompt makes a request faster. The batch=8 pass,
+            # running second on an already-warm server, fitted the same model
+            # at R^2=0.9996. The difference was warmup, not the model.
+            if warmup:
+                backend.generate(
+                    [
+                        GenRequest(
+                            task_id=f"warmup-{role}-{concurrency}-{i}",
+                            arm=f"characterize_{role}",
+                            seed=0,
+                            model_role=role,
+                            system=_PROBE_SYSTEM,
+                            user=prompts[max(prompts)],
+                            params=GenParams(temperature=0.0, top_p=1.0,
+                                             max_tokens=64),
+                        )
+                        for i in range(warmup)
+                    ],
+                    concurrency=concurrency,
+                )
+
             requests = [
                 GenRequest(
                     task_id=f"probe-p{spec.prefill_target}-m{spec.max_tokens}-r{spec.repeat}",

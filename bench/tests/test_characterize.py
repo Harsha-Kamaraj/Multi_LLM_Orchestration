@@ -178,3 +178,29 @@ def test_characterizing_one_role_carries_the_other_over(tmp_path):
     run_and_save(backend, out, roles=("large",), probes=probes,
                  concurrencies=(1,), require_exact_tokens=False)
     assert set(CostCoefficients.load(out).models) == {"mock-small", "mock-large"}
+
+
+def test_warmup_requests_are_not_measured():
+    """A cold server's first responses carry one-time costs that are not a
+    function of token counts. Timing them bends the fit — the first real
+    measurement produced a negative prefill coefficient, which claims a longer
+    prompt makes a request faster."""
+    backend = serving_backend()
+    seen: list = []
+    inner = backend.generate
+
+    def counting(requests, **kwargs):
+        seen.extend(requests)
+        return inner(requests, **kwargs)
+
+    backend.generate = counting  # type: ignore[method-assign]
+    result = characterize(
+        backend, roles=("small",), concurrencies=(1,),
+        probes=build_probes(repeats=6), require_exact_tokens=False, warmup=4,
+    )
+
+    warmups = [r for r in seen if r.task_id.startswith("warmup-")]
+    assert len(warmups) == 4, "warmup requests must actually be issued"
+    # Issued, but absent from the accounting, the fit, and the stored rows.
+    assert result.n_requests == len(seen) - 4
+    assert all(not g.task_id.startswith("warmup-") for g in result.generations)

@@ -28,6 +28,7 @@ from pathlib import Path
 
 from .arms import ARMS, DEFAULT_SEEDS, FROZEN_LADDER
 from .backends import available, default_backend_name, get_backend
+from .characterize import DEFAULT_WARMUP
 from .cost import CostCoefficients, DEFAULT_COEFFICIENTS_PATH, validate_imputation
 from .errors import WorkerError
 from .extract import extract
@@ -124,6 +125,9 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="instance rate; recorded as a stated assumption")
     char.add_argument("--repeats", type=int, default=3,
                       help="samples per grid cell")
+    char.add_argument("--warmup", type=int, default=DEFAULT_WARMUP,
+                      help="untimed requests per concurrency, discarded before "
+                           "measuring; 0 times the server's one-time costs")
     char.add_argument("--threshold", type=float, default=0.9,
                       help="R^2 the imputation must clear")
     char.add_argument("--allow-approx-tokens", action="store_true",
@@ -213,6 +217,7 @@ def _cmd_characterize(args: argparse.Namespace) -> int:
             hardware=args.hardware,
             usd_per_gpu_hour=args.usd_per_gpu_hour,
             require_exact_tokens=not args.allow_approx_tokens,
+            warmup=args.warmup,
             threshold=args.threshold,
             notes=args.notes,
         )
