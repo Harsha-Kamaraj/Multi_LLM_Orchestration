@@ -36,7 +36,14 @@ where = ["src"]
 [tool.pytest.ini_options]
 # Each role's tests live inside that role's commit scope, so a test change and
 # the code it covers belong to the same owner and land in the same commit:
-#   bench/tests    -> workers  (R1)
-#   schemas/tests  -> schemas  (R4, all-role sign-off to change the contract)
-#   eval/tests     -> eval     (R4)
-testpaths = ["tests", "bench/tests", "schemas/tests", "eval/tests"]
+#   bench/tests                    -> workers  (R1)
+#   schemas/tests                  -> schemas  (R4, all-role sign-off to change)
+#   eval/tests                     -> eval     (R4)
+#   src/orchestrator/policy/tests  -> policy   (R3)
+testpaths = [
+    "tests",
+    "bench/tests",
+    "schemas/tests",
+    "eval/tests",
+    "src/orchestrator/policy/tests",
+]
