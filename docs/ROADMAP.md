@@ -22,7 +22,7 @@ anyone commits four weeks to it.
 | ✅ | `schemas/` frozen: `Task` and `Rollout` JSON schemas | R4 |
 | ✅ | Synthetic rollout generator emitting schema-valid rows with a planted, known-strength signal | R4 |
 | ❌ | Sign-off from all four roles on the frozen schema — landed unilaterally, past the day-3 deadline | all |
-| ❌ | 200-task pilot sweep (small ×3 seeds, large ×3 seeds), fully graded — no `data/tasks/`, no GPU run | R1 · R2 |
+| ❌ | 200-task pilot sweep (small ×3 seeds, large ×3 seeds), fully graded — the corpus ✅ landed 13 Aug (`data/tasks/pilot_200.jsonl`), the sweep ❌ needs a GPU | R1 · R2 |
 | ❌ | Oracle-gap study — `eval.oracle_headroom()` is implemented, but there is no pilot to run it on | R4 |
 | ❌ | Power calculation off measured discordance rates — `eval.mcnemar_sample_size()` exists; the discordance rate does not | R4 |
 
@@ -54,9 +54,9 @@ The minimum system that produces a defensible result. Nothing outside this list 
 |---|---|---|
 | ❌ | Qwen2.5-Coder-1.5B on GPU0 and 7B on GPU1, **TP=1 both** — both backends written and exercised against `mock`, neither pointed at a real vLLM process | R1 |
 | ❌ | Characterization pass producing cost coefficients, `warm_latency_s`, `cold_start_s` — `characterize.py` is written and tested; `bench/cost_coefficients.json` does not exist | R1 |
-| ❌ | 1,000 tasks from MBPP+ / HumanEval+, split 60/20/20, manifest hashed and committed — there is no `data/` directory | R2 · R4 |
+| ❌ | 1,000 tasks from MBPP+ / HumanEval+, split 60/20/20, manifest hashed and committed — the 200-task pilot corpus ✅ exists and is hashed; the full 1,000 and the `data/splits/` manifest ❌ do not | R2 · R4 |
 | ❌ | Frozen-ladder sweep: 6 generations per task, all graded, all logged to Parquet — the runner is tested end to end against a mock, and has never swept | R1 |
-| ❌ | Calibrated `P(pass \| x, arm)` at D0 and D1, plus cost and latency regressors — `src/orchestrator/policy/` does not exist | R3 |
+| ❌ | Calibrated `P(pass \| x, arm)` at D0 and D1, plus cost and latency regressors — `src/orchestrator/policy/` ✅ exists with a row contract and a label-stripping reader; the feature builders and value heads ❌ are not written | R3 |
 | ❌ | λ-sweep producing the cost–accuracy frontier — the evaluator side (`eval.sweep`, `eval.pareto_front`) is ✅; the policy that feeds it is ❌ | R3 |
 | ✅ | Seven baselines: `always_small`, `always_large`, `random_route(p)`, **`heuristic_route`**, `best_of_n_small`, `verifier_gated_cascade`, `oracle_router` — all implemented against fixtures | R4 |
 | ✅ | Paired bootstrap CIs and McNemar tests — implemented and validated on the planted signal | R4 |
@@ -129,7 +129,8 @@ how routing research is normally done, and saying it first is better than being 
 - **Week 1 is a hard serialization point.** Schemas must be frozen by day 3 — every
   downstream role builds against them. A schema change in week 5 costs the team a week.
 - **R2's task manifest blocks R1's sweep** and nothing else. It is the only true
-  cross-role dependency in Phase 1.
+  cross-role dependency in Phase 1 — and it **cleared on 13 Aug**. Every
+  remaining blocker in the project is hardware or unwritten code, not a handoff.
 - **R3 and R4 never block on GPUs.** They develop against the synthetic rollout
   generator, which doubles as a correctness test for the policy and stats code —
   the right answer is known by construction.

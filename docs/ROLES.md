@@ -196,13 +196,14 @@ Two columns, deliberately. Collapsing them is how "built" gets read as "working"
 | Role | Code landed | Producing real numbers |
 |---|---|---|
 | R1 · Serving & Workers | ✅ 270 tests, whole pipeline against a mock backend | ❌ never touched a GPU |
-| R2 · Verifier & Data | ❌ grader is the original scaffold, not the contract below | ❌ no corpus, no graded row |
-| R3 · Policy & Learning | ❌ `src/orchestrator/policy/` does not exist | ❌ |
-| R4 · Evaluation & Analysis | ✅ 50 + 159 tests — `schemas/` and `eval/`, plus the leakage audit, report builder, and `orch-eval` CLI | ❌ no store to evaluate |
+| R2 · Verifier & Data | ✅ 48 tests — grader rewritten to the contract below, hack detector, corpus builder, 200-task pilot manifest | ❌ never graded a real generation |
+| R3 · Policy & Learning | ✅ 64 tests — row contract and a label-stripping pinned reader | ❌ no feature builders or value heads yet |
+| R4 · Evaluation & Analysis | ✅ 209 tests — `schemas/` and `eval/`, plus the leakage audit, report builder, and `orch-eval` CLI | ❌ no store to evaluate |
 
-The critical path runs through the two ❌ code cells. R2's task manifest is the
-only true cross-role dependency in Phase 1 and it is still open, which is what
-keeps R1 at "built" rather than "measured".
+**All four seats now have code on `main`, and none has a measurement.** The
+shape of the blockage changed on 13 Aug: R2's task manifest — the only true
+cross-role dependency in Phase 1 — landed, so R1 is no longer blocked on
+anything but GPU access.
 
-Where each role's contract has drifted from what is actually in the tree, the
-divergence is recorded in that role's own doc rather than smoothed over here.
+Every role's contract is now satisfied by the code in the tree; the earlier
+grader divergence was closed by R2's two-pass rewrite.

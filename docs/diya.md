@@ -119,33 +119,33 @@ frozen. Hand over the corpus; don't hold the split.
 
 ## Week 1 (Phase 0) — status at 13 Aug 2026
 
-R2 is on the critical path and is the least advanced seat that other people are
-waiting on. `src/orchestrator/graders/` still holds the original scaffold —
-182 lines, no tests of its own, and an interface that does not match the contract
-above.
+R2 landed the corpus and a full grader rewrite on 13 Aug. The Phase 1 blocker is
+cleared: `data/tasks/pilot_200.jsonl` exists, so R1 is no longer waiting on
+anything but a GPU.
 
 | | Item | Where it stands |
 |---|---|---|
-| ❌ | Sign off on `schemas/` by day 3 | The package landed from R4 without R2 review. `hack_flags`, `error_class`, and the `visible_*`/`hidden_*` fields are all in the rollout schema — R2 does not yet emit any of them. |
-| ❌ | Task manifest for the 200-task pilot — **this is R1's blocker, ship it first** | There is no `data/` directory. This is the only true cross-role dependency in Phase 1 and it is holding R1 at "built, never measured". |
-| ❌ | Docker grader working end to end, per-test pass counts | The `docker` backend is written in `pytest_grader.py` with every documented flag (`--network none --read-only --memory 512m --pids-limit 128 --cpus 1 --tmpfs`), and per-test counts are recovered by an in-sandbox reporter. **It has never been run** — there are no grader tests and no graded row. |
-| ❌ | Grade R1's pilot sweep | No pilot exists to grade |
-| ❌ | A deliberately malicious solution suite, and a hack detector that catches it | Neither exists. `hack_flags` is a schema field with no producer. |
+| ✅ | Task manifest for the 200-task pilot — **this was R1's blocker** | `data/tasks/pilot_200.jsonl` + `MANIFEST.json` — 200 tasks, 100 per dataset, `content_hash 0376d0df9783abc4`. Built by `corpus_build.py`, which is itself tested. |
+| ✅ | A deliberately malicious solution suite, and a hack detector that catches it | `hacks.py` flags six behaviours — `hardcoded_visible_case`, `bare_except_pass`, `sys_exit_or_skip`, `reads_test_file`, `test_file_modified`, `test_file_deleted` — validated against nine adversarial fixtures that include two honest controls, so the detector is checked for false positives as well as misses |
+| ✅ | Per-test pass counts, visible and hidden kept apart | See below — the contract is now enforced in code |
+| ⚠️ | Docker grader working end to end | The `docker` backend and its `Dockerfile` are written with every documented flag, and the grader is covered by 48 tests. Those tests exercise the *subprocess* path; **no generation has been graded in a container**, so the sandbox boundary itself is still unexercised. |
+| ❌ | Grade R1's pilot sweep | R1 has not swept — needs GPU access, not R2 |
+| ❌ | Sign off on `schemas/` by day 3 | Missed. R2's emitted fields do now conform to the rollout schema, so the artifact agrees even though the process step did not happen. |
 
-### The interface has drifted, and it is R2's to close
+### The interface drift is closed
 
-What this doc specifies, versus what `src/orchestrator/graders/` actually does:
+An earlier revision of this doc recorded the grader diverging from its own
+contract. The two-pass rewrite fixed every row:
 
 | | Specified | In the tree |
 |---|---|---|
-| ❌ | `grade(task, code)` — R1 does the extraction | `grade(task, output)`, which calls `base.extract_code(output)` itself — the dependency this doc says was "removed deliberately" is still there |
-| ❌ | `visible_passed/total`, `hidden_passed/total` as separate accessors | `Grade` is `passed` / `total` — **the visible/hidden split does not exist in code**, so it is currently convention, which is exactly what this doc forbids |
-| ❌ | `error_class`, `hack_flags` | `Grade` has a free-text `error` and no `hack_flags` |
+| ✅ | `grade(task, code)` — R1 does the extraction | `def grade(self, task: Task, code: str) -> Grade` — takes code. The `Grader` Protocol pins the signature. |
+| ✅ | `visible`/`hidden` as separate accessors | `Grade` holds `visible: TestResult` and `hidden: TestResult` as distinct fields, and **deliberately exposes no blended scalar** — a feature builder has to name which tier it means. `solved` derives from `hidden` alone and is documented in-code as a label only. |
+| ✅ | `error_class`, `hack_flags` | Both present; `error_class` is validated against `ERROR_CLASSES` in `__post_init__`, so an unknown class raises rather than propagating |
 | ✅ | Docker flags, and no credentials in the subprocess env | Both implemented as documented |
 
-The first two rows are the load-bearing ones. Until `Grade` carries the split,
-nothing mechanically stops a hidden-test outcome reaching a feature builder, and
-R1 is doing extraction twice.
+The visible/hidden split is now enforced by the type rather than by convention,
+which is what this doc always asked for.
 
 ---
 

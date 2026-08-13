@@ -153,20 +153,25 @@ Output:  policy.pkl + decisions.parquet, one per (policy, λ)
 
 ## Week 1 (Phase 0) — status at 13 Aug 2026
 
-**`src/orchestrator/policy/` does not exist.** No R3 code has been committed, so
-every item below is unstarted rather than in progress.
+`src/orchestrator/policy/` landed on 13 Aug — the foundation, not yet the models.
+64 tests green.
 
 | | Item | Where it stands |
 |---|---|---|
-| ❌ | Sign off on `schemas/` by day 3 | The package landed from R4 without R3 review. The contract R3 must consume is frozen and unratified by this seat. |
-| ✅ | Synthetic rollout generator with planted signal + adversarial fixtures | Delivered by R4 as `schemas/synth.py` and `schemas/adversarial.py`, not by R3 — the fixtures exist, so **nothing here blocks the start** |
-| ❌ | D0 and D1 feature builders, each feature declaring its decision point | Not written |
-| ❌ | Recover the planted signal end to end | Not written. The planted signal is documented at `AUC_D0 ≈ 0.62–0.69` in `synth.py`, so the target is known and unclaimed. |
-| ❌ | Measure `AUC_D0` and `AUC_D1` on the pilot | Blocked twice over — no feature builder, and no graded pilot |
+| ✅ | Synthetic rollout generator with planted signal + adversarial fixtures | Delivered by R4 as `schemas/synth.py` and `schemas/adversarial.py`, so nothing blocked the start |
+| ✅ | A reader that cannot leak | `store.py` returns rows with the hidden-test columns **physically removed** and hands labels back separately, keyed by `rollout_id`. A feature builder is never given the object holding them. The test split has no load flag at all. Every read pins an explicit `run_id`. |
+| ✅ | The row contract | `contract.py` — `observable_at(decision_point)` names which columns exist at D0 versus D1, plus `normalize_row`, `is_graded`, `solved`, and `assert_no_labels(columns, context=…)` |
+| ❌ | D0 and D1 feature builders, each feature declaring its decision point | Not written. `observable_at()` is the mechanism they must be built against. |
+| ❌ | Three value heads — `P_pass`, `E_cost`, `E_latency` | Not written |
+| ❌ | Calibration to ECE < 0.05, and the λ-sweep | Not written |
+| ❌ | Recover the planted signal end to end | Not written. The planted signal sits at `AUC_D0 ≈ 0.62–0.69` per `synth.py`, so the target is known and unclaimed. |
+| ❌ | Measure `AUC_D0` and `AUC_D1` on the pilot | R2's 200-task manifest now exists, but nothing has been swept or graded |
+| ❌ | Sign off on `schemas/` by day 3 | Missed — the contract R3 consumes was frozen without this seat's review |
 
-The honest read: R3 is the one seat with **no blocker and no output**. R4 built
-the fixtures that were supposed to remove the excuse for waiting on hardware, and
-they have been available since they landed.
+The three leakage guarantees this package claims are enforced in code rather
+than in review, which is the right shape: R4's independent audit
+(`eval/leakage.py`) should find nothing, and if it does, that is the design
+working.
 
 ---
 

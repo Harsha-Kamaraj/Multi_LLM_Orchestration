@@ -76,10 +76,12 @@ has run on a GPU, no task corpus exists, and not one gate has been evaluated.
 | Sweep runner, rollout store, resume, cost model, code extraction | R1 | ✅ built · ❌ never on a GPU |
 | Baselines, cluster bootstrap, McNemar, BH, matched-cost frontier, confusion matrix | R4 | ✅ |
 | Leakage audit, results report, golden-run comparison, `orch-eval` CLI | R4 | ✅ |
-| Task corpus `data/tasks/` — **blocks R1's sweep** | R2 | ❌ |
-| Docker grader end to end, visible/hidden split, hack detection | R2 | ❌ |
+| Task corpus `data/tasks/` — 200-task pilot, hashed manifest | R2 | ✅ |
+| Grader: visible/hidden split, `hack_flags`, `error_class`, Docker image | R2 | ✅ built · ❌ never graded a real generation |
+| Corpus ingestion, graded rollout store, `orch-grade` CLI | R2 | ✅ |
+| Policy: rollout row contract, label-stripping pinned reader | R3 | ✅ |
+| Policy: feature builders, value heads, calibration, λ-sweep | R3 | ❌ |
 | Frozen splits `data/splits/` | R4 | ❌ |
-| Policy — feature builders, value heads, calibration, λ-sweep | R3 | ❌ |
 | CI (`.github/workflows/`) | infra | ❌ |
 
 **Phase 0 gate — all four quantities are unmeasured:**
@@ -91,9 +93,10 @@ has run on a GPU, no task corpus exists, and not one gate has been evaluated.
 | `AUC_D0` | ≥ 0.65 | ❌ |
 | `AUC_D1` | ≥ 0.75 | ❌ |
 
-479 tests pass — `bench/tests` (270), `eval/tests` (159), `schemas/tests` (50) —
-with no GPU and no network, in ~60 s. That is a statement about code, not about
-the claim this project exists to test.
+591 tests pass — `bench/tests` (270), `eval/tests` (159), `src/orchestrator/policy/tests`
+(64), `schemas/tests` (50), `tests/graders` (48) — with no GPU and no network, in
+~3 min. That is a statement about code, not about the claim this project exists
+to test.
 
 ---
 

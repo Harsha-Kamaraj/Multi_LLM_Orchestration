@@ -163,7 +163,7 @@ and none of my numbers exist yet.
 | 1 | Sign off on `schemas/` by day 3 | ✅ | The package landed (R4, 19 commits) and `schemas/tests/test_conformance.py` binds my row shape to it directly — version, required fields, `finish_reason` and `mode` vocabularies, and `rollout_id` derivation are all asserted against `generation.py`. **My row shape is now ratified by a test rather than by agreement.** It landed past day 3 and without a four-role sign-off, so the process clause failed even though the artifact is right. |
 | 2 | Sweep runner, rollout store, resume, cost model | ✅ | End to end, 270 tests green in ~23 s, no GPU and no network |
 | 3 | vLLM at TP=1, 1.5B on GPU0 / 7B on GPU1 | ❌ | `vllm_offline` and `vllm_openai` backends are written and exercised against `mock`. Neither has been pointed at a real vLLM process. |
-| 4 | 200-task pilot sweep → R2 for grading | ❌ | **Blocked on R2's task manifest** — there is no `data/` directory at all. `corpus.py` reads it the moment it lands; this is my only cross-role dependency and it is still open. |
+| 4 | 200-task pilot sweep → R2 for grading | ❌ | **No longer blocked.** R2 shipped `data/tasks/pilot_200.jsonl` on 13 Aug — 200 tasks, hashed manifest — and `corpus.py` reads it. My only cross-role dependency is closed, so what stands between here and a pilot is GPU access and nothing else. |
 | 5 | First characterization pass → `cost_coefficients.json` | ❌ | `characterize.py` and the coefficient fit are written and tested. There is no `bench/cost_coefficients.json`. The coefficients do not exist. |
 | 6 | Measure `cold_start_s` for both models | ❌ | Needs a real vLLM startup to time. Nothing to report. |
 
@@ -200,10 +200,12 @@ third is a measurement, and it is the one the rest of the project leans on.
 
 ### What unblocks what
 
-Nothing downstream of me is waiting on code. R2's manifest and GPU access are
-the only two things between here and rows 3–6 flipping, and neither is mine to
-schedule. If both landed tomorrow the pilot sweep is a day's work, because the
-pipeline it runs through has been tested on every commit since it was written.
+Nothing downstream of me is waiting on code, and as of 13 Aug nothing upstream
+of me is missing either. R2's manifest landed; **GPU access is now the single
+remaining blocker** on rows 3–6, and it is the one item on this page that no
+amount of my own work can clear. The pilot sweep is a day's work once a card is
+available, because the pipeline it runs through has been tested on every commit
+since it was written.
 
 Phase 0's number is `A_large − A_small ≥ 8pp`. Expect ~20pp from 1.5B vs 7B. If
 the arms aren't differentiated, **shrink the small model** — drop to 0.5B before
