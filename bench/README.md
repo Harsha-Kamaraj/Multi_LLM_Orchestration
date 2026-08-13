@@ -14,18 +14,20 @@ orch-workers --help
 Every subcommand also runs as `python -m orchestrator.workers.cli`.
 
 > **Status — 13 Aug 2026.** Every command on this page is implemented and
-> tested; **none has been run against a GPU or a real task corpus.** Read the
+> tested, and the sweep has now been driven across R2's real 200-task corpus —
+> but **only on the `mock` backend. Nothing here has touched a GPU.** Read the
 > pages below as a specification of built behaviour, not as a record of
 > measurements.
 >
 > | | |
 > |---|---|
-> | ✅ | `sweep`, `characterize`, `impute`, `validate`, `runs`, `show`, `extract` — all implemented, 270 tests |
+> | ✅ | `sweep`, `characterize`, `impute`, `validate`, `runs`, `show`, `extract` — all implemented, 278 tests |
 > | ✅ | The full pipeline exercised end to end against the `mock` backend on every commit |
-> | ❌ | `vllm_offline` / `vllm_openai` pointed at a real vLLM process |
+> | ✅ | `data/tasks/pilot_200.jsonl` — R2's manifest landed 13 Aug and `corpus.py` reads it |
+> | ✅ | The pipeline driven across all 1200 cells of that manifest on `mock`, splits resolving to `{'test': 45, 'train': 111, 'val': 44}` |
+> | ❌ | `vllm_offline` / `vllm_openai` pointed at a real vLLM process. vLLM 0.27.1 is installed and both arms' weights are local, but no process has been started — see [guru.md](../docs/guru.md#status--13-aug-2026) for why. |
 > | ❌ | `bench/cost_coefficients.json` — the file does not exist, so `impute` has no coefficients to apply |
-> | ❌ | `data/tasks/*.jsonl` — R2's manifest, the one thing blocking a first sweep |
-> | ❌ | Any `runs/` directory. No `run_id` has ever been minted. |
+> | ❌ | Any **sealed** `runs/` directory produced on a GPU. A `run_id` has now been minted, but only against `mock`. |
 >
 > The example `run_id`s below (`2026-08-14-a3f91c2-7d4e08`) are illustrative
 > format samples, not real runs.
@@ -86,7 +88,7 @@ orch-workers sweep \
     --splits data/splits/splits.json \
     --backend vllm_offline \
     --small Qwen/Qwen2.5-Coder-1.5B-Instruct \
-    --large Qwen/Qwen2.5-Coder-32B-Instruct \
+    --large Qwen/Qwen2.5-Coder-7B-Instruct \
     --arms direct_small direct_large \
     --seeds 0 1 2 \
     --batch-size 256 \
@@ -120,7 +122,7 @@ orch-workers characterize \
     --backend vllm_openai \
     --backend-option base_url=http://localhost:8000/v1 \
     --small Qwen/Qwen2.5-Coder-1.5B-Instruct \
-    --large Qwen/Qwen2.5-Coder-32B-Instruct \
+    --large Qwen/Qwen2.5-Coder-7B-Instruct \
     --concurrency 1 8 \
     --hardware "A100-80GB PCIe" \
     --usd-per-gpu-hour 1.10

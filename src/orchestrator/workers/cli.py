@@ -7,7 +7,7 @@ everything R1 does is a subcommand here, and every subcommand prints the
 
     orch-workers sweep --tasks data/tasks/mbpp.jsonl --backend vllm_offline \\
         --small Qwen/Qwen2.5-Coder-1.5B-Instruct \\
-        --large Qwen/Qwen2.5-Coder-32B-Instruct
+        --large Qwen/Qwen2.5-Coder-7B-Instruct
 
     orch-workers characterize --backend vllm_openai --hardware A100-80GB \\
         --usd-per-gpu-hour 1.10

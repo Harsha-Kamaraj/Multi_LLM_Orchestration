@@ -152,9 +152,37 @@ means prompt format is entirely your business.
 ## Status — 13 Aug 2026
 
 **Every line of code R1 owes is written and tested. Not one of it has touched a
-GPU.** That is the whole summary, and the tables below are the unflattering
+GPU.** That is still the whole summary, and the tables below are the unflattering
 version of it. The distinction matters: a tested code path is not a measurement,
 and none of my numbers exist yet.
+
+What changed on 13 Aug is the *shape* of the blocker, not the blocker. The
+serving stack is now provisioned — vLLM 0.27.1 on a Python 3.12 venv under
+WSL2, both arms' bf16 weights resident on local disk — and the pipeline has
+been driven end to end across R2's real 200-task manifest on the `mock`
+backend, minting the first `run_id` this project has ever produced. That is
+still not a measurement. It is the last thing that can be proven without a
+card.
+
+Doing it surfaced **three bugs that 270 fixture-backed tests did not**, each of
+which would have fired on the first GPU sweep:
+
+| Fix | What it was |
+|---|---|
+| `256daae` | The prompt label-guard matched `hidden` as a substring of a *key name*, so R2's `metadata.n_hidden_cases` — an int count — aborted the sweep on task 1. Scalars are now exempt; a key holding content is still refused. |
+| `6a9e035` | `load_splits` only knew the `splits` container. R4's manifest nests under `task_ids`, so the flat branch read `corpus_hash`/`name`/`salt` as three task ids and reported `{'unassigned': 200}`. It now reports `{'test': 45, 'train': 111, 'val': 44}`, matching the manifest's own counts. **This failed silently**, which made `--include-splits` inert and quietly unfenced the test split. A manifest matching no task is now an error. |
+| `9edfc4c` | A sweep sealed unconditionally. Sealing makes a run immutable and an errored cell fails the resume index, so any transient error sealed the run into a state nothing could repair — the config hashes into the `run_id`, so the identical re-run meant to retry found the same id sealed and refused. "Errors are retried on resume" was documented but unreachable. |
+
+The second one is the one worth staring at: it did not raise, it just made a
+guarantee stop holding. 278 tests now.
+
+> **Hardware note.** This doc's *"2× RTX 4090, 24 GB each"* does not describe
+> the machine I am on, which has **one RTX 4500 Ada, 24 GB**. The two-card plan
+> below — small arm on GPU0, large arm on GPU1, roughly half the wall-time —
+> has no second card to use here. TP=1 still holds and the model choices are
+> unaffected; the throughput argument is what does not survive. Left standing
+> rather than rewritten, because which machine the pilot runs on is not mine to
+> decide alone.
 
 ### Week 1 (Phase 0)
 
@@ -162,8 +190,8 @@ and none of my numbers exist yet.
 |---|---|---|---|
 | 1 | Sign off on `schemas/` by day 3 | ✅ | The package landed (R4, 19 commits) and `schemas/tests/test_conformance.py` binds my row shape to it directly — version, required fields, `finish_reason` and `mode` vocabularies, and `rollout_id` derivation are all asserted against `generation.py`. **My row shape is now ratified by a test rather than by agreement.** It landed past day 3 and without a four-role sign-off, so the process clause failed even though the artifact is right. |
 | 2 | Sweep runner, rollout store, resume, cost model | ✅ | End to end, 270 tests green in ~23 s, no GPU and no network |
-| 3 | vLLM at TP=1, 1.5B on GPU0 / 7B on GPU1 | ❌ | `vllm_offline` and `vllm_openai` backends are written and exercised against `mock`. Neither has been pointed at a real vLLM process. |
-| 4 | 200-task pilot sweep → R2 for grading | ❌ | **No longer blocked.** R2 shipped `data/tasks/pilot_200.jsonl` on 13 Aug — 200 tasks, hashed manifest — and `corpus.py` reads it. My only cross-role dependency is closed, so what stands between here and a pilot is GPU access and nothing else. |
+| 3 | vLLM at TP=1, 1.5B on GPU0 / 7B on GPU1 | ❌ | vLLM 0.27.1 is now installed (WSL2, py3.12, torch 2.13+cu130) and both arms' weights are local and load from the cache — 28 layers, bf16, confirmed for each. **No vLLM process has been started**, because starting one needs VRAM I do not have. Still not a measurement. |
+| 4 | 200-task pilot sweep → R2 for grading | ❌ | The pipeline now runs end to end across all 1200 cells of R2's real manifest on `mock`, splits resolving correctly, resume retrying exactly the errored cells. Every step of the pilot except the generation itself is now proven on real inputs rather than fixtures. The generation is the part that needs a card. |
 | 5 | First characterization pass → `cost_coefficients.json` | ❌ | `characterize.py` and the coefficient fit are written and tested. There is no `bench/cost_coefficients.json`. The coefficients do not exist. |
 | 6 | Measure `cold_start_s` for both models | ❌ | Needs a real vLLM startup to time. Nothing to report. |
 
@@ -203,9 +231,23 @@ third is a measurement, and it is the one the rest of the project leans on.
 Nothing downstream of me is waiting on code, and as of 13 Aug nothing upstream
 of me is missing either. R2's manifest landed; **GPU access is now the single
 remaining blocker** on rows 3–6, and it is the one item on this page that no
-amount of my own work can clear. The pilot sweep is a day's work once a card is
-available, because the pipeline it runs through has been tested on every commit
-since it was written.
+amount of my own work can clear.
+
+That blocker is now specific rather than general. The card is not absent, it is
+**occupied**: 22.4 GB of 24.5 GB and 95% utilisation held by an unrelated
+`llama-server` (Llama-3.1-8B Q4_K_M, 129k context, fully offloaded), leaving
+**1.8 GB free**. That is not enough for the small arm's 3.1 GB of weights before
+any KV cache, and the large arm needs roughly 23 GB with its cache. Quantising
+only the small arm to fit would confound model scale with quantisation damage
+and is forbidden three sections up, so there is no version of this that runs in
+1.8 GB.
+
+Rows 3–6 therefore need the card released, not more preparation. Preparation is
+finished: vLLM is installed, the weights are on disk, and the pipeline has been
+driven across the real corpus. What used to be "a day's work once a card is
+available" is now closer to an afternoon, and the three bugs above are the
+reason that estimate is worth anything — each would have cost a GPU session to
+find.
 
 Phase 0's number is `A_large − A_small ≥ 8pp`. Expect ~20pp from 1.5B vs 7B. If
 the arms aren't differentiated, **shrink the small model** — drop to 0.5B before
