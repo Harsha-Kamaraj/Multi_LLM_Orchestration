@@ -1,0 +1,68 @@
+{
+  "by_dataset": {
+    "humaneval+": 100,
+    "mbpp+": 100
+  },
+  "content_hash": "0376d0df9783abc4",
+  "datasets": [
+    "humaneval+",
+    "mbpp+"
+  ],
+  "filtered": [
+    {
+      "reason": "unconvertible",
+      "task_id": "HumanEval/10"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "HumanEval/113"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "HumanEval/14"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "HumanEval/21"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "HumanEval/27"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "HumanEval/38"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "HumanEval/50"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "HumanEval/93"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "Mbpp/255"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "Mbpp/599"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "Mbpp/737"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "Mbpp/787"
+    },
+    {
+      "reason": "unconvertible",
+      "task_id": "Mbpp/794"
+    }
+  ],
+  "generated_at": "2026-08-13T13:36:13Z",
+  "kept_count": 200,
+  "n_per_dataset": 100
+}
