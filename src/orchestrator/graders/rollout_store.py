@@ -211,6 +211,14 @@ class RolloutStore:
         rows = [row for part in parts for row in _read_jsonl(part)]
         if not rows:
             return False
+        # `extra` (passed through from R1's Generation row) holds
+        # backend-specific keys whose shape varies between rows, and is
+        # often `{}` — Arrow infers a struct type from the first row and
+        # then fails on every other row, exactly as R1's own store.py notes.
+        # Serialize it so the column type is stable regardless of content.
+        for row in rows:
+            if isinstance(row.get("extra"), dict):
+                row["extra"] = json.dumps(row["extra"], default=str, sort_keys=True)
         table = pa.Table.from_pylist(rows)
         pq.write_table(table, self.rows_dir / PARQUET_NAME, compression="zstd")
         return True
