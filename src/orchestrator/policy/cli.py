@@ -47,6 +47,11 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
                              "the rollout row carries no prompt")
     parser.add_argument("--cost", default=None, metavar="FINGERPRINT",
                         help="which costing to attach, from `orch-policy runs`")
+    parser.add_argument("--layer", choices=("rollouts", "generations"),
+                        default=None,
+                        help="which layer to read. Defaults to whichever is "
+                             "sealed, preferring R2's graded `rollouts` — the "
+                             "labels exist nowhere else")
 
 
 def _cmd_gate(args: argparse.Namespace) -> int:
@@ -54,6 +59,7 @@ def _cmd_gate(args: argparse.Namespace) -> int:
         args.root, args.run,
         tasks_path=args.tasks,
         cost_fingerprint=args.cost,
+        layer=args.layer,
     )
 
     points = ("D0", "D1") if args.decision_point == "both" else (args.decision_point,)
@@ -105,11 +111,13 @@ def _cmd_fixture(args: argparse.Namespace) -> int:
         SynthConfig(n_tasks=args.tasks, seeds=args.seeds,
                     d0_signal=args.d0_signal, d1_fidelity=args.d1_fidelity),
         seed=args.seed,
+        layout=args.layout,
     )
     print(f"run_id     {fixture.run_id}")
     print(f"rows       {len(fixture.result.rows)}")
     print(f"tasks      {fixture.tasks_path}")
     print(f"costing    {fixture.cost_fingerprint}")
+    print(f"layout     {args.layout}")
     print(f"\nmeasure it with:\n"
           f"  orch-policy gate --root {args.out} --run {fixture.run_id} "
           f"--tasks {fixture.tasks_path} --cost {fixture.cost_fingerprint}")
@@ -129,8 +137,10 @@ def _cmd_runs(args: argparse.Namespace) -> int:
         manifest = json.loads((child / "_MANIFEST.json").read_text())
         costings = store.list_cost_fingerprints(root, child.name)
         flag = "" if manifest.get("publishable", False) else "  [not publishable]"
+        graded = "graded" if (child / "_ROLLOUT_MANIFEST.json").exists() \
+            else "UNGRADED"
         print(f"{child.name}  rows={manifest.get('n_rows', '?')}  "
-              f"costings={costings or '-'}{flag}")
+              f"{graded}  costings={costings or '-'}{flag}")
     if not found:
         print(f"no sealed runs under {root} — readers skip unsealed ones")
     return EXIT_OK
@@ -172,6 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
     fixture_cmd.add_argument("--d0-signal", type=float, default=0.40)
     fixture_cmd.add_argument("--d1-fidelity", type=float, default=0.82)
     fixture_cmd.add_argument("--seed", type=int, default=0)
+    fixture_cmd.add_argument("--layout", choices=("generations", "split"),
+                             default="generations",
+                             help="'split' reproduces the real two-layer shape: "
+                                  "R1's ungraded rows plus R2's graded ones")
     fixture_cmd.set_defaults(func=_cmd_fixture)
 
     runs_cmd = sub.add_parser("runs", help="list sealed runs and their costings")
