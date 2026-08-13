@@ -218,3 +218,48 @@ def test_runs_lists_only_sealed_runs(fx, capsys):
 def test_runs_on_an_empty_store_says_so(tmp_path, capsys):
     assert main(["runs", "--root", str(tmp_path / "nope")]) == EXIT_OK
     assert "no store" in capsys.readouterr().out
+
+
+# -- the graded layer --------------------------------------------------------
+
+
+def test_the_gate_reads_the_graded_layer_of_a_split_run(tmp_path, capsys):
+    """The labels live in R2's `rollouts/`, and nothing has to say so."""
+    fx = fixtures.write_fixture(tmp_path, SynthConfig(n_tasks=200, seeds=3),
+                                layout="split")
+    code = main(["gate", "--root", str(fx.root), "--run", fx.run_id,
+                 "--tasks", str(fx.tasks_path), "--decision-point", "D1",
+                 "--resamples", "80"])
+    assert code in (EXIT_OK, EXIT_INCONCLUSIVE)
+    assert "AUC_D1" in capsys.readouterr().out
+
+
+def test_asking_for_the_ungraded_layer_reports_it_as_unusable(tmp_path, capsys):
+    fx = fixtures.write_fixture(tmp_path, SynthConfig(n_tasks=60, seeds=2),
+                                layout="split")
+    code = main(["gate", "--root", str(fx.root), "--run", fx.run_id,
+                 "--layer", "generations", "--resamples", "20"])
+    assert code == EXIT_ERROR
+    assert "no hidden-test outcome" in capsys.readouterr().err
+
+
+def test_runs_distinguishes_graded_from_ungraded(tmp_path, capsys):
+    """Whether R2 has been through is the first thing to know about a run."""
+    fixtures.write_fixture(tmp_path, SynthConfig(n_tasks=40, seeds=2),
+                           layout="split")
+    main(["runs", "--root", str(tmp_path)])
+    assert "graded" in capsys.readouterr().out
+
+    other = tmp_path / "plain"
+    fixtures.write_fixture(other, SynthConfig(n_tasks=40, seeds=2))
+    main(["runs", "--root", str(other)])
+    assert "UNGRADED" in capsys.readouterr().out
+
+
+def test_fixture_can_write_the_two_layer_layout(tmp_path, capsys):
+    assert main(["fixture", "--out", str(tmp_path), "--tasks", "40",
+                 "--seeds", "2", "--layout", "split"]) == EXIT_OK
+    out = capsys.readouterr().out
+    run_id = out.split("run_id")[1].split()[0]
+    assert (tmp_path / run_id / "_ROLLOUT_MANIFEST.json").exists()
+    assert (tmp_path / run_id / "rollouts").is_dir()
