@@ -151,3 +151,55 @@ def test_golden_fails_when_a_number_moves(run_dir, tmp_path, capsys):
 def test_run_id_is_required():
     with pytest.raises(SystemExit):
         main(["report", "--root", "runs"])
+
+
+# --- splits ----------------------------------------------------------------
+
+def _corpus(tmp_path, n=150, prompt="p"):
+    path = tmp_path / "corpus.jsonl"
+    path.write_text("\n".join(
+        json.dumps({"task_id": f"t/{i:05d}", "prompt": f"{prompt}{i}",
+                    "visible_tests": "assert f(1)", "hidden_tests": "assert f(2)"})
+        for i in range(n)
+    ) + "\n")
+    return path
+
+
+def test_splits_build_reports_proportions(tmp_path, capsys):
+    assert main(["splits", "--corpus", str(_corpus(tmp_path)),
+                 "--salt", "s", "--out", str(tmp_path / "s.json")]) == 0
+    out = capsys.readouterr().out
+    assert "train" in out and "test" in out and "wrote" in out
+
+
+def test_splits_verify_passes_on_its_own_corpus(tmp_path, capsys):
+    corpus = _corpus(tmp_path)
+    main(["splits", "--corpus", str(corpus), "--salt", "s",
+          "--out", str(tmp_path / "s.json")])
+    assert main(["splits", "--corpus", str(corpus),
+                 "--verify", str(tmp_path / "s.json")]) == 0
+    assert "verifies against" in capsys.readouterr().out
+
+
+def test_splits_verify_fails_on_a_mutated_corpus(tmp_path, capsys):
+    corpus = _corpus(tmp_path)
+    main(["splits", "--corpus", str(corpus), "--salt", "s",
+          "--out", str(tmp_path / "s.json")])
+    (tmp_path / "m").mkdir()
+    mutated = _corpus(tmp_path / "m", prompt="CHANGED")
+    assert main(["splits", "--corpus", str(mutated),
+                 "--verify", str(tmp_path / "s.json")]) == 1
+    assert "corpus content hash changed" in capsys.readouterr().err
+
+
+def test_the_committed_pilot_split_verifies():
+    """The real artifact against the real corpus. If R2 regenerates the corpus
+    in place, this is what tells us the frozen split no longer describes it."""
+    from pathlib import Path
+
+    corpus = Path("data/tasks/pilot_200.jsonl")
+    manifest = Path("data/splits/pilot_200.json")
+    if not (corpus.exists() and manifest.exists()):
+        import pytest as _pytest
+        _pytest.skip("pilot corpus or split manifest not present")
+    assert main(["splits", "--corpus", str(corpus), "--verify", str(manifest)]) == 0
