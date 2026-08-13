@@ -74,6 +74,10 @@ earned its complexity at D0 — report that, and let D1 carry the result.
 
 ## Phase 2 — Repair & probe · Weeks 5–7
 
+**Status: ❌ not started.** R1 has the `probe_small` and `repair_small` /
+`repair_large` arms registered early, so the arm registry will not be reshaped
+mid-project — but nothing has been run through them.
+
 **Deliverables**
 
 - Repair ladder (one round, seeded from each small-model sample)
@@ -87,6 +91,10 @@ earned its complexity at D0 — report that, and let D1 carry the result.
 ---
 
 ## Phase 3 — Hardening & replication · Weeks 8–10
+
+**Status: ❌ not started**, with one exception — the reporting half of "Final
+report" exists ahead of schedule: `eval.build()` emits a deterministic
+`results.json` and `orch-eval report` formats it. It has no numbers to report.
 
 **Deliverables**
 

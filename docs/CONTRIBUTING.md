@@ -161,9 +161,9 @@ are stamped `-dirty` and are non-publishable.
 |---|---|---|
 | ✅ | Pre-commit hook passes (scope, format, no cross-role edits) | `.githooks/pre-commit`, per clone |
 | ✅ | `CODEOWNERS` review from every owning role | GitHub, if the listed handles have write access |
-| ❌ | Golden-run test reproduces `results.json` exactly, or the change is marked `BREAKING-GOLDEN:` in the PR body | Not written — there is no `results.json` and no golden run |
+| ⚠️ | Golden-run test reproduces `results.json` exactly, or the change is marked `BREAKING-GOLDEN:` in the PR body | Machinery ✅ — `eval.build()` emits a deterministic report and `eval.compare_to_golden()` diffs it (`orch-eval golden`). Gate ❌ — **no golden file is committed**, so nothing is actually being compared. |
 | ✅ | Adversarial-fixture pipeline test passes | `schemas/adversarial.py` + `schemas/tests/test_adversarial.py` |
-| ❌ | Leakage canary caught | Not written — R4's audit tooling does not exist |
+| ⚠️ | Leakage canary caught | Machinery ✅ — `eval.audit()` runs seven checks including `check_canary`, independent of R3's code. Gate ❌ — R3 has produced no features to audit. |
 | ❌ | No new bare mean in the report — every number carries an interval | There is no report yet. `eval/tests/test_integration.py` encodes the rule as a test on the harness, which is the closest thing that exists. |
 
 ### What is not enforced yet — 13 Aug 2026

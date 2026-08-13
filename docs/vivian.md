@@ -202,7 +202,7 @@ An evaluation harness that has never been run against a known answer is not vali
 
 ## Week 1 (Phase 0) — status at 13 Aug 2026
 
-R4 is the furthest-along seat: `schemas/` and `eval/` both landed, 160 tests
+R4 is the furthest-along seat: `schemas/` and `eval/` both landed, 209 tests
 green. What is missing is not code, it is anything to point the code at.
 
 | | Item | Where it stands |
@@ -213,16 +213,23 @@ green. What is missing is not code, it is anything to point the code at.
 | ✅ | All seven baselines implemented against fixtures, including `heuristic_route` | Six in `standard_baselines()`; `heuristic_route` lives in `eval/heuristics.py` because it must be fitted on validation first. It is tuned across families and swept to a frontier via `tuned_frontier()`, not shipped as a point. |
 | ✅ | Cluster bootstrap + McNemar, validated on the planted signal | `cluster_bootstrap` resamples tasks *and* seeds, `mcnemar_exact`, `benjamini_hochberg`. `eval/tests/test_integration.py` checks the planted-optimal policy is recovered at the planted effect size. |
 | ❌ | Oracle-gap study on the pilot | `oracle_headroom()` is implemented and tested. There is no pilot. |
-| ❌ | Leakage audit tooling — independent of R3's feature code | Not written. It is also not yet blocking: R3 has produced no features to audit. |
+| ✅ | Leakage audit tooling — independent of R3's feature code | `eval/leakage.py` — seven independent checks: the planted canary, a column allowlist, split disjointness, an AUC upper bound, normalization scope, seed aggregation, and ladder causality. It imports nothing from R3, which is the property that makes it an audit rather than a self-check. |
 
 Also built, beyond the week-1 list: the matched-cost frontier
 (`compare_at_matched_cost`, `pareto_front`, `frontier_dominates`), the full
-five-cell router confusion matrix, and a loader that refuses the test split
-unless `unlock_test_split()` is called with a reason and a committed
-pre-registration file.
+five-cell router confusion matrix, a loader that refuses the test split unless
+`unlock_test_split()` is called with a reason and a committed pre-registration
+file, a deterministic `results.json` builder with `compare_to_golden()`, and the
+`orch-eval` CLI (`report`, `audit`, `power`, `golden`).
 
-**Still open for R4:** `data/splits/`, the golden-run test, and the report
-itself — none exist.
+**Still open for R4:**
+
+| | |
+|---|---|
+| ❌ | `data/splits/` — the 60/20/20 split manifest does not exist |
+| ❌ | A **committed golden** `results.json`. `compare_to_golden()` is written and tested; there is no baseline file for it to compare against, so the regression gate has nothing to guard yet. |
+| ❌ | A pre-registration document. The loader demands one before unlocking test; none is committed. |
+| ❌ | An actual report — the builder is real, the numbers it would format do not exist |
 
 ---
 
