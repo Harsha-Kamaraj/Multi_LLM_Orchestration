@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Harsha-Kamaraj/Multi_LLM_Orchestration/schemas/rollout.schema.json",
+  "title": "Rollout",
+  "description": "One (task_id, arm, seed, ladder_step) cell. Written once by R1, graded in place by R2, read by R3 and R4. Append-only: a re-grade is a new run_id, never an overwrite. Grading fields are present and null before grading, so a store read before and after grading has identical columns and nothing downstream special-cases an ungraded run.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "rollout_id",
+    "run_id",
+    "task_id",
+    "arm",
+    "seed",
+    "params_hash",
+    "split",
+    "mode",
+    "batch_size",
+    "finish_reason"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bumped on any destructive change. Present on every row so a mixed-version store is detectable rather than silently averaged."
+    },
+
+    "rollout_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Deterministic identity: sha256 over (run_id, task_id, arm, seed, params_hash, ladder_step, parent_rollout_id). Derived rather than random so a re-run under identical conditions reproduces it, and a child can reference a parent not yet written."
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9a-f]{7}-[0-9a-f]{6}(-dirty)?$",
+      "description": "{date}-{git_sha7}-{config_hash6}. A -dirty suffix marks a run from an unclean worktree; such runs are non-publishable."
+    },
+    "task_id": { "type": "string", "minLength": 1 },
+    "arm": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Names a role (small, large, repair), never a model id. Swapping the model behind an arm changes params_hash, not the arm name."
+    },
+    "seed": { "type": "integer" },
+    "params_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Covers temperature, top_p, max_tokens, and the prompt template text. Part of the resume key, so a cell computed under different parameters is never mistaken for a completed one."
+    },
+
+    "split": {
+      "type": "string",
+      "enum": ["train", "val", "test"],
+      "description": "Assigned by R4's split manifest. Generating on test is permitted; opening test grades is not."
+    },
+    "dataset": { "type": "string" },
+    "code_version": { "type": "string" },
+
+    "text": { "type": "string", "description": "Raw model output." },
+    "code": { "type": "string", "description": "Extracted code. R1 extracts; R2 grades this field and never parses text." },
+    "model_id": { "type": "string" },
+    "prefill_tokens": { "type": "integer", "minimum": 0 },
+    "decode_tokens": { "type": "integer", "minimum": 0 },
+    "wall_ms": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Recorded for sanity only. NOT the latency metric: under mode=sweep this is a function of queue depth, not of the model."
+    },
+    "finish_reason": {
+      "type": "string",
+      "enum": ["stop", "length", "refusal", "error", "unknown"],
+      "description": "Normalized across backends. 'length' is a truncation — a failed generation that grades as a capability gap, so its rate is reported separately."
+    },
+
+    "mode": {
+      "type": "string",
+      "enum": ["sweep", "serving"],
+      "description": "Consumers wanting latency must filter to serving. Carrying this field is what stops batched sweep wall-clock being read as latency."
+    },
+    "batch_size": { "type": "integer", "minimum": 1 },
+    "backend": { "type": "string" },
+    "tokens_exact": {
+      "type": "boolean",
+      "description": "False when token counts were approximated rather than taken from the serving tokenizer. Such rows are unfit for cost fitting."
+    },
+
+    "extract_strategy": { "type": "string" },
+    "code_parses": { "type": "boolean" },
+
+    "ladder_step": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Position in the frozen retry ladder. Makes sequential policies exactly replayable offline."
+    },
+    "parent_rollout_id": {
+      "type": ["string", "null"],
+      "description": "The rollout this one was seeded from, for repair arms. Null at step 0."
+    },
+
+    "gpu_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Imputed from cost coefficients, never measured here. Null until the characterization pass has run."
+    },
+    "imputed_latency_s": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Warm, batch=1 latency imputed from coefficients. Cold start is excluded by construction and reported separately."
+    },
+
+    "visible_passed": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "R2. Usable as a feature at D1 — this is what makes the escalation decision non-trivial."
+    },
+    "visible_total": { "type": ["integer", "null"], "minimum": 0 },
+    "hidden_passed": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "R2. LABEL ONLY. Never a feature, directly or transitively. A feature derived from pass rates is this field wearing a disguise."
+    },
+    "hidden_total": { "type": ["integer", "null"], "minimum": 0 },
+    "error_class": { "type": ["string", "null"] },
+    "hack_flags": {
+      "type": ["array", "null"],
+      "items": { "type": "string" },
+      "description": "Reward-hack detections. A rising rate is a finding, not noise."
+    },
+    "grade_duration_s": { "type": ["number", "null"], "minimum": 0 },
+
+    "created_at": { "type": "string" },
+    "error": { "type": ["string", "null"] },
+    "extra": { "type": "object" }
+  },
+  "additionalProperties": true
+}

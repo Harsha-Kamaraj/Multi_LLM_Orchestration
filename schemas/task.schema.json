@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Harsha-Kamaraj/Multi_LLM_Orchestration/schemas/task.schema.json",
+  "title": "Task",
+  "description": "One benchmark problem. Produced by R2's ingestion, consumed by R1's sweep and R2's grader. The visible/hidden test separation is structural here rather than conventional: they are different fields, so a feature builder cannot reach hidden tests by accident.",
+  "type": "object",
+  "required": ["task_id", "dataset", "prompt", "entrypoint", "visible_tests", "hidden_tests"],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable across regenerations of the corpus. Prefixed by dataset to keep ids unique when corpora are merged."
+    },
+    "dataset": {
+      "type": "string",
+      "description": "Source corpus, e.g. humaneval_plus, mbpp_plus, livecodebench."
+    },
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What the model is shown. The only text a D0 feature builder may read."
+    },
+    "entrypoint": {
+      "type": "string",
+      "description": "Function name the tests call."
+    },
+
+    "visible_tests": {
+      "type": "string",
+      "description": "Shown to the model and executable by the cascade at inference. Usable as a D1 feature."
+    },
+    "hidden_tests": {
+      "type": "string",
+      "description": "Held back. Determines the label and nothing else. Never shown to a model, never read by a feature builder."
+    },
+
+    "contamination": {
+      "type": "object",
+      "description": "R2's ingestion record. R4 needs it for the leakage audit, so it travels with the task rather than living in a side document.",
+      "properties": {
+        "filtered": { "type": "boolean" },
+        "reason": { "type": ["string", "null"] },
+        "cutoff_date": { "type": ["string", "null"] },
+        "source_url": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+
+    "difficulty": {
+      "type": ["number", "null"],
+      "description": "OPTIONAL and dangerous. Permitted only when derived from problem structure. A value derived from model pass rates is label leakage in disguise and must not be written here — see provenance."
+    },
+    "difficulty_provenance": {
+      "type": ["string", "null"],
+      "enum": ["structural", "human_annotated", "dataset_provided", null],
+      "description": "Required whenever difficulty is set. R4's leakage audit rejects any split whose tasks carry difficulty without provenance, and treats dataset_provided as suspect until its derivation is documented."
+    },
+
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": true
+}
