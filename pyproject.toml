@@ -31,6 +31,7 @@ policy = ["scikit-learn>=1.4", "lightgbm>=4.0"]
 orch = "orchestrator.cli:main"
 orch-workers = "orchestrator.workers.cli:main"
 orch-eval = "eval.cli:main"
+orch-policy = "orchestrator.policy.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
