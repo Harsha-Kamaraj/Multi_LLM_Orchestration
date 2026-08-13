@@ -1,15 +1,16 @@
 """`orch-eval` — the command line R4 actually runs.
 
-Four subcommands, matching the four things R4 does:
+Five subcommands, matching the five things R4 does:
 
     report   build results.json from a pinned run_id
     audit    run the leakage audit, exit non-zero if blocked
     power    how many tasks are needed, from measured discordance
     golden   diff a fresh report against the committed golden file
+    splits   build or verify the frozen train/val/test manifest
 
-Every subcommand requires an explicit `--run-id`. Nothing reads "latest": a
-report whose inputs depend on directory mtime is not reproducible, and the
-failure is silent because the number still looks fine.
+Every store-reading subcommand requires an explicit `--run-id`. Nothing reads
+"latest": a report whose inputs depend on directory mtime is not reproducible,
+and the failure is silent because the number still looks fine.
 """
 
 from __future__ import annotations
@@ -23,6 +24,13 @@ from .leakage import audit as run_audit
 from .loading import StoreError, load_run, unlock_test_split
 from .policies import standard_baselines
 from .report import build, compare_to_golden, format_table
+from .splits import (
+    SplitError,
+    SplitManifest,
+    build as build_splits,
+    read_corpus,
+    verify as verify_splits,
+)
 from .stats import mcnemar_sample_size
 
 DEFAULT_LAMS = (0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5)
@@ -127,6 +135,28 @@ def cmd_golden(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_splits(args: argparse.Namespace) -> int:
+    tasks = read_corpus(args.corpus)
+    if args.verify:
+        manifest = SplitManifest.read(args.verify)
+        problems = verify_splits(manifest, tasks)
+        if problems:
+            print(f"{len(problems)} problems with {args.verify}:", file=sys.stderr)
+            for p in problems:
+                print(f"  - {p}", file=sys.stderr)
+            return 1
+        print(f"{args.verify} verifies against {len(tasks)} tasks")
+        return 0
+
+    manifest = build_splits(tasks, name=args.name, salt=args.salt)
+    print(f"corpus      {len(tasks)} tasks   hash {manifest.corpus_hash[:16]}")
+    for split, count in manifest.counts.items():
+        print(f"  {split:<6} {count:>6}  {count / manifest.n_tasks:>7.1%}")
+    if args.out:
+        print(f"wrote {manifest.write(args.out)}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="orch-eval", description="R4 evaluation harness"
@@ -160,6 +190,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_golden.add_argument("--seed", type=int, default=0)
     p_golden.set_defaults(func=cmd_golden)
 
+    p_splits = sub.add_parser("splits", help="build or verify frozen splits")
+    p_splits.add_argument("--corpus", required=True, help="R2 task manifest (jsonl)")
+    p_splits.add_argument("--name", default="pilot")
+    p_splits.add_argument(
+        "--salt", default="pilot-2026-08-13",
+        help="the split's identity. Re-salting after seeing results is the "
+             "split-level equivalent of unblinding twice",
+    )
+    p_splits.add_argument("--out", default=None, help="path to write the manifest")
+    p_splits.add_argument("--verify", default=None,
+                          help="existing manifest to check instead of building")
+    p_splits.set_defaults(func=cmd_splits)
+
     return parser
 
 
@@ -167,7 +210,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))
-    except (StoreError, FileNotFoundError) as exc:
+    except (StoreError, SplitError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
