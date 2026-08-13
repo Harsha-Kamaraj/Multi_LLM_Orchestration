@@ -3,7 +3,7 @@
 Rules that aren't enforced aren't rules. Everything here is checked by
 `.githooks/pre-commit`, CI, or `CODEOWNERS` — nothing relies on remembering.
 
-Project overview in the [README](./README.md); your role's scope and week-1
+Project overview in the [README](../README.md); your role's scope and week-1
 checklist in your own doc — [guru](./guru.md) · [diya](./diya.md) ·
 [harsha](./harsha.md) · [vivian](./vivian.md).
 

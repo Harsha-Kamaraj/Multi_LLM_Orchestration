@@ -30,7 +30,7 @@ The central empirical question is where in the pipeline the signal actually live
 
 That asymmetry is the most important number in the project, and it drives the
 architecture. If `AUC_D1 < 0.75`, the premise is false and we stop — that gate is
-in [ROADMAP.md](./ROADMAP.md).
+in [ROADMAP.md](./docs/ROADMAP.md).
 
 ---
 
@@ -68,9 +68,9 @@ finding** — the learned policy did not earn its complexity, and the report say
 
 | If you are… | Read |
 |---|---|
-| New to the repo | This file, then [ROLES.md](./ROLES.md) |
-| About to commit | [CONTRIBUTING.md](./CONTRIBUTING.md) — **enforced by a hook, not by trust** |
-| Planning the week | [ROADMAP.md](./ROADMAP.md) |
+| New to the repo | This file, then [ROLES.md](./docs/ROLES.md) |
+| About to commit | [CONTRIBUTING.md](./docs/CONTRIBUTING.md) — **enforced by a hook, not by trust** |
+| Planning the week | [ROADMAP.md](./docs/ROADMAP.md) |
 | Looking for your job | Your own doc, below |
 
 ### Role docs
@@ -80,10 +80,10 @@ checklist, a definition of done, and the failure modes specific to that seat.
 
 | Role | Owner | Doc | Owns |
 |---|---|---|---|
-| R1 · Serving & Workers | Guru | [guru.md](./guru.md) | The GPUs |
-| R2 · Verifier & Data | Diya | [diya.md](./diya.md) | Correctness |
-| R3 · Policy & Learning | Harsha | [harsha.md](./harsha.md) | The policy |
-| R4 · Evaluation & Analysis | Vivian | [vivian.md](./vivian.md) | The verdict |
+| R1 · Serving & Workers | Guru | [guru.md](./docs/guru.md) | The GPUs |
+| R2 · Verifier & Data | Diya | [diya.md](./docs/diya.md) | Correctness |
+| R3 · Policy & Learning | Harsha | [harsha.md](./docs/harsha.md) | The policy |
+| R4 · Evaluation & Analysis | Vivian | [vivian.md](./docs/vivian.md) | The verdict |
 
 Each doc ends with a **"what you must not do"** list. Boundaries are stated from
 both sides on purpose — R1's says *don't grade*, R2's says *don't parse raw output*.

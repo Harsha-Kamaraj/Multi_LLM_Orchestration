@@ -21,7 +21,7 @@
 
 # --- All-role approval ------------------------------------------------------
 # Destructive schema changes and CI config change everyone's ground truth.
-# (Additive optional fields are exempt — see CONTRIBUTING.md §Schema changes.)
+# (Additive optional fields are exempt — see docs/CONTRIBUTING.md §Schema changes.)
 /schemas/rollout.schema.json   @guru-bharadwaj20 @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
 /schemas/task.schema.json      @guru-bharadwaj20 @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers
 /.github/workflows/            @guru-bharadwaj20 @Diya-R-Gowda @Harsha-Kamaraj @VivianSobers

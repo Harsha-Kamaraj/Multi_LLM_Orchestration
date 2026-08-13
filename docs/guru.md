@@ -268,7 +268,7 @@ estimate. Every cost number downstream is built on it.
 ## What's built
 
 `src/orchestrator/workers/` and `bench/`. Operational detail lives in
-[bench/README.md](./bench/README.md); this is the map and the reasoning.
+[bench/README.md](../bench/README.md); this is the map and the reasoning.
 
 | Module | Holds |
 |---|---|
@@ -334,4 +334,4 @@ thing the three-tier cost model is *for*. Two costings of one run coexist.
 
 ---
 
-[README](./README.md) · [CONTRIBUTING](./CONTRIBUTING.md) · [ROADMAP](./ROADMAP.md) · [ROLES](./ROLES.md) · [bench](./bench/README.md)
+[README](../README.md) · [CONTRIBUTING](./CONTRIBUTING.md) · [ROADMAP](./ROADMAP.md) · [ROLES](./ROLES.md) · [bench](../bench/README.md)
