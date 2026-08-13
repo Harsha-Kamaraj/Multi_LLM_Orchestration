@@ -24,11 +24,20 @@ from typing import Any
 from ..types import Task
 
 # Keys in `Task.metadata` that would leak labels into a prompt if rendered.
-# Deliberately narrow: `hidden` as a substring, because in this project no
-# innocent metadata key contains it, plus an exact list of reference-solution
-# names. A looser rule (matching "solution" anywhere) trips on harmless keys
-# like `n_solutions_found` and would block a sweep for no reason.
+# Deliberately narrow: `hidden` as a substring, plus an exact list of
+# reference-solution names. A looser rule (matching "solution" anywhere) trips
+# on harmless keys like `n_solutions_found` and would block a sweep for no
+# reason.
+#
+# The substring rule matches on the key, so it also catches *counts* about the
+# hidden suite. R2's frozen manifest carries `n_hidden_cases`, which names the
+# hidden tests without containing one. Scalars are therefore exempt: a test
+# suite or a reference solution is a string, never an int, so a non-string
+# value cannot be the label this guard exists to stop. The key-name rule still
+# applies in full to anything that could hold content.
 _FORBIDDEN_METADATA_SUBSTRINGS = ("hidden",)
+# Values that cannot carry a label no matter what the key is called.
+_LABEL_SAFE_VALUE_TYPES = (bool, int, float, type(None))
 _FORBIDDEN_METADATA_KEYS = frozenset({
     "canonical_solution", "reference_solution", "solution", "solution_code",
     "answer", "answer_code", "gold", "gold_code",
@@ -86,9 +95,11 @@ def _assert_no_label_keys(metadata: dict[str, Any]) -> None:
     Cheap, and it fires at the moment someone adds `hidden_tests` to metadata
     rather than three weeks later when a leakage audit finds it.
     """
-    for key in metadata:
+    for key, value in metadata.items():
         low = str(key).lower()
         if low == VISIBLE_TESTS_KEY:
+            continue
+        if isinstance(value, _LABEL_SAFE_VALUE_TYPES):
             continue
         hit = low in _FORBIDDEN_METADATA_KEYS or any(
             bad in low for bad in _FORBIDDEN_METADATA_SUBSTRINGS

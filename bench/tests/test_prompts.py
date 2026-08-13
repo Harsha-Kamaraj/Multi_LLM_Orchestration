@@ -50,6 +50,20 @@ def test_innocent_metadata_is_allowed(key):
     assert PromptContext.from_task(_task(**{key: 3})) is not None
 
 
+@pytest.mark.parametrize("key", ["n_hidden_cases", "n_visible_cases"])
+def test_scalar_counts_about_the_hidden_suite_are_allowed(key):
+    """R2's frozen manifest carries `n_hidden_cases`. It names the hidden suite
+    without containing one, and a count is not a label — refusing it blocks the
+    pilot sweep on a key no template can reach."""
+    assert PromptContext.from_task(_task(**{key: 1006})) is not None
+
+
+def test_hidden_key_holding_content_is_still_refused():
+    """The scalar exemption must not become a way to smuggle a suite in."""
+    with pytest.raises(ValueError, match="label"):
+        PromptContext.from_task(_task(hidden_tests="assert add(1, 2) == 3"))
+
+
 def test_notests_template_omits_the_tests():
     ctx = PromptContext.from_task(_task(visible_tests="assert add(1, 2) == 3"))
     _system, user = get_template("direct_notests_v1").render(ctx)
