@@ -1,0 +1,55 @@
+"""R4 — the evaluation harness.
+
+Reads a rollout store and decides whether anything actually beat the baselines.
+Owns the frozen test split, every statistic, and the report.
+
+The dependency runs one way: this package imports `schemas`, and nothing else
+from the project. It never calls a model, never runs a grader, and needs no
+GPU — so a wrong number here can only come from this code, and a change in
+another role's package cannot silently move a reported result.
+"""
+
+from __future__ import annotations
+
+from .loading import (
+    OPEN_SPLITS,
+    Rollouts,
+    StoreError,
+    TestSplitError,
+    TestSplitUnlock,
+    load_rows,
+    load_run,
+    unlock_test_split,
+)
+from .policies import Outcome, standard_baselines
+from .stats import (
+    Interval,
+    McNemarResult,
+    benjamini_hochberg,
+    cluster_bootstrap,
+    mcnemar_exact,
+    mcnemar_sample_size,
+    paired_diff_bootstrap,
+    summarize,
+)
+
+__all__ = [
+    "OPEN_SPLITS",
+    "Interval",
+    "McNemarResult",
+    "Outcome",
+    "Rollouts",
+    "StoreError",
+    "TestSplitError",
+    "TestSplitUnlock",
+    "benjamini_hochberg",
+    "cluster_bootstrap",
+    "load_rows",
+    "load_run",
+    "mcnemar_exact",
+    "mcnemar_sample_size",
+    "paired_diff_bootstrap",
+    "standard_baselines",
+    "summarize",
+    "unlock_test_split",
+]
