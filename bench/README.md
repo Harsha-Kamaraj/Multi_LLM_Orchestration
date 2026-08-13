@@ -13,24 +13,26 @@ orch-workers --help
 
 Every subcommand also runs as `python -m orchestrator.workers.cli`.
 
-> **Status — 13 Aug 2026.** Every command on this page is implemented and
-> tested, and the sweep has now been driven across R2's real 200-task corpus —
-> but **only on the `mock` backend. Nothing here has touched a GPU.** Read the
-> pages below as a specification of built behaviour, not as a record of
-> measurements.
+> **Status — 13 Aug 2026.** Every command on this page has been run against a
+> real GPU. The numbers below are measurements.
 >
 > | | |
 > |---|---|
-> | ✅ | `sweep`, `characterize`, `impute`, `validate`, `runs`, `show`, `extract` — all implemented, 278 tests |
-> | ✅ | The full pipeline exercised end to end against the `mock` backend on every commit |
-> | ✅ | `data/tasks/pilot_200.jsonl` — R2's manifest landed 13 Aug and `corpus.py` reads it |
-> | ✅ | The pipeline driven across all 1200 cells of that manifest on `mock`, splits resolving to `{'test': 45, 'train': 111, 'val': 44}` |
-> | ❌ | `vllm_offline` / `vllm_openai` pointed at a real vLLM process. vLLM 0.27.1 is installed and both arms' weights are local, but no process has been started — see [guru.md](../docs/guru.md#status--13-aug-2026) for why. |
-> | ❌ | `bench/cost_coefficients.json` — the file does not exist, so `impute` has no coefficients to apply |
-> | ❌ | Any **sealed** `runs/` directory produced on a GPU. A `run_id` has now been minted, but only against `mock`. |
+> | ✅ | `sweep`, `characterize`, `impute`, `validate`, `runs`, `show`, `extract` — all implemented, 281 tests |
+> | ✅ | `vllm_offline` and `vllm_openai` both driven against real vLLM 0.11.0, bf16, TP=1 |
+> | ✅ | `2026-08-13-c76a55d-4f4767` — sealed pilot run, 1200 rows, 0 failed, 1.00% truncated, 187.4 s |
+> | ✅ | `bench/cost_coefficients.json` — both arms, batch 1 and 8, fitted from measured timings |
+> | ✅ | `validate` clears the definition of done: **R²=0.9997** (1.5B) and **R²=1.0000** (7B) |
 >
-> The example `run_id`s below (`2026-08-14-a3f91c2-7d4e08`) are illustrative
-> format samples, not real runs.
+> Measured on one `NVIDIA RTX 4500 Ada Generation 24GB (WSL2, TP=1)`. The
+> example `run_id`s below (`2026-08-14-a3f91c2-7d4e08`) remain illustrative
+> format samples, not real runs — the real one is named above.
+>
+> Two environment notes for anyone reproducing this: vLLM must run with
+> `VLLM_USE_FLASHINFER_SAMPLER=0` where no CUDA toolkit is present, and the
+> characterization server must run `--no-enable-prefix-caching` or the probe
+> grid repays ~zero prefill and the fit produces a negative prefill
+> coefficient. See [guru.md](../docs/guru.md#status--13-aug-2026).
 
 ---
 

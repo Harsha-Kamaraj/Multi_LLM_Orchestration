@@ -151,49 +151,76 @@ means prompt format is entirely your business.
 
 ## Status — 13 Aug 2026
 
-**Every line of code R1 owes is written and tested. Not one of it has touched a
-GPU.** That is still the whole summary, and the tables below are the unflattering
-version of it. The distinction matters: a tested code path is not a measurement,
-and none of my numbers exist yet.
+**R1 has run on a GPU. Every row below is now a measurement rather than a
+claim.** The pilot sweep is sealed, the cost coefficients are fitted from
+timings, and the definition-of-done R² is a number instead of an absence.
 
-What changed on 13 Aug is the *shape* of the blocker, not the blocker. The
-serving stack is now provisioned — vLLM 0.27.1 on a Python 3.12 venv under
-WSL2, both arms' bf16 weights resident on local disk — and the pipeline has
-been driven end to end across R2's real 200-task manifest on the `mock`
-backend, minting the first `run_id` this project has ever produced. That is
-still not a measurement. It is the last thing that can be proven without a
-card.
+The headline run:
 
-Doing it surfaced **three bugs that 270 fixture-backed tests did not**, each of
-which would have fired on the first GPU sweep:
+| | |
+|---|---|
+| `run_id` | `2026-08-13-c76a55d-4f4767` — sealed, publishable, clean sha |
+| Rows | 1200 = 200 tasks × 2 arms × 3 seeds, **0 failed** |
+| Wall-clock | 187.4 s for the whole sweep, both arms, batched at 256 |
+| Truncation | **1.00%** (12 of 1200), against a 15% alarm |
+| Extraction | 1182 `fenced_entrypoint`, 6 `fenced_parsed`, 12 `fenced_truncated` — every row yielded code |
+| Cost sidecar | 1200/1200 imputed, **2820.0 GPU-seconds**, $0.78 at the stated rate |
+
+Measured on `NVIDIA RTX 4500 Ada Generation 24GB (WSL2, TP=1)`:
+
+| Model | batch | prefill ms/tok | decode ms/tok | R² |
+|---|---|---|---|---|
+| Qwen2.5-Coder-1.5B | 1 | 0.0435 | 9.5061 | 0.9994 |
+| Qwen2.5-Coder-1.5B | 8 | 0.2487 | 10.1061 | 0.9589 |
+| Qwen2.5-Coder-7B | 1 | 0.1613 | 37.4314 | 0.9999 |
+| Qwen2.5-Coder-7B | 8 | 0.8863 | 39.2172 | 0.9433 |
+
+`cold_start_s` — **28.20 s** small, **55.36 s** large, both inside the 30–90 s
+this doc predicted. The small arm's first-ever start was 46.29 s; the extra was
+`torch.compile` populating a cold cache. Reported here and excluded from the
+objective, as the section above requires.
+
+The decode numbers are mutually consistent, which is the cheapest evidence they
+are real: the 7B decodes 3.9× slower than the 1.5B (26.7 vs 105 tok/s) against a
+4.7× parameter ratio — the shape of a bandwidth-bound decode, not of a number
+someone hoped for.
+
+### What the GPU run cost in bugs
+
+Five defects surfaced that the fixture-backed suite never could, three from
+driving the real corpus and two from the measurement itself:
 
 | Fix | What it was |
 |---|---|
 | `256daae` | The prompt label-guard matched `hidden` as a substring of a *key name*, so R2's `metadata.n_hidden_cases` — an int count — aborted the sweep on task 1. Scalars are now exempt; a key holding content is still refused. |
-| `6a9e035` | `load_splits` only knew the `splits` container. R4's manifest nests under `task_ids`, so the flat branch read `corpus_hash`/`name`/`salt` as three task ids and reported `{'unassigned': 200}`. It now reports `{'test': 45, 'train': 111, 'val': 44}`, matching the manifest's own counts. **This failed silently**, which made `--include-splits` inert and quietly unfenced the test split. A manifest matching no task is now an error. |
-| `9edfc4c` | A sweep sealed unconditionally. Sealing makes a run immutable and an errored cell fails the resume index, so any transient error sealed the run into a state nothing could repair — the config hashes into the `run_id`, so the identical re-run meant to retry found the same id sealed and refused. "Errors are retried on resume" was documented but unreachable. |
+| `6a9e035` | `load_splits` only knew the `splits` container. R4's manifest nests under `task_ids`, so the flat branch read `corpus_hash`/`name`/`salt` as three task ids and reported `{'unassigned': 200}`. It now reports `{'test': 45, 'train': 111, 'val': 44}`. **This failed silently**, which made `--include-splits` inert and quietly unfenced the test split. |
+| `9edfc4c` | A sweep sealed unconditionally, so any transient error sealed the run into a state nothing could repair — the config hashes into the `run_id`, so the identical re-run meant to retry found the same id sealed and refused. "Errors are retried on resume" was documented but unreachable. |
+| `25c3f3f` | **Characterization timed its own warmup.** The first pass fitted the small arm's prefill at **−0.185 ms/token** — a longer prompt making a request *faster* — and failed the definition-of-done at R²=0.708. Two confounds: batch=1 ran first and paid the server's one-time costs, and vLLM's prefix caching meant every repeated probe repaid ~zero prefill, so prefill length varied while prefill cost did not. Warmup requests are now issued and discarded, and the characterization server runs with prefix caching off. The same fit is now R²=0.9994. |
+| `d402374` | **`validate` had never worked.** `ImputationReport.summary` is a property and `_cmd_validate` called it, so every run with eligible rows raised `TypeError` instead of printing a verdict. The previous status line here — "the check is implemented, it has never run against real data" — was true because it *could not* run. Both existing tests covered the refusal path, which returns before the print. |
 
-The second one is the one worth staring at: it did not raise, it just made a
-guarantee stop holding. 278 tests now.
+The fourth is the one worth staring at. It produced a physically impossible
+coefficient and would have shipped a cost model that looked entirely plausible:
+every downstream GPU-second, dollar, and imputed latency would have been wrong,
+and nothing downstream would have flagged it. 281 tests now.
 
 > **Hardware note.** This doc's *"2× RTX 4090, 24 GB each"* does not describe
-> the machine I am on, which has **one RTX 4500 Ada, 24 GB**. The two-card plan
-> below — small arm on GPU0, large arm on GPU1, roughly half the wall-time —
-> has no second card to use here. TP=1 still holds and the model choices are
-> unaffected; the throughput argument is what does not survive. Left standing
-> rather than rewritten, because which machine the pilot runs on is not mine to
-> decide alone.
+> the machine this ran on, which has **one RTX 4500 Ada, 24 GB**. TP=1 and the
+> model choices are unaffected. What does not survive is the throughput
+> argument: with one card the arms ran **sequentially**, not concurrently, so
+> row 3's "1.5B on GPU0 / 7B on GPU1" was satisfied in substance — each arm
+> served at TP=1, one model resident at a time — but not in the literal
+> two-card layout. Both arms bf16, neither quantized, as the hard rule requires.
 
 ### Week 1 (Phase 0)
 
 | # | Assigned | Done | Where it actually stands |
 |---|---|---|---|
 | 1 | Sign off on `schemas/` by day 3 | ✅ | The package landed (R4, 19 commits) and `schemas/tests/test_conformance.py` binds my row shape to it directly — version, required fields, `finish_reason` and `mode` vocabularies, and `rollout_id` derivation are all asserted against `generation.py`. **My row shape is now ratified by a test rather than by agreement.** It landed past day 3 and without a four-role sign-off, so the process clause failed even though the artifact is right. |
-| 2 | Sweep runner, rollout store, resume, cost model | ✅ | End to end, 270 tests green in ~23 s, no GPU and no network |
-| 3 | vLLM at TP=1, 1.5B on GPU0 / 7B on GPU1 | ❌ | vLLM 0.27.1 is now installed (WSL2, py3.12, torch 2.13+cu130) and both arms' weights are local and load from the cache — 28 layers, bf16, confirmed for each. **No vLLM process has been started**, because starting one needs VRAM I do not have. Still not a measurement. |
-| 4 | 200-task pilot sweep → R2 for grading | ❌ | The pipeline now runs end to end across all 1200 cells of R2's real manifest on `mock`, splits resolving correctly, resume retrying exactly the errored cells. Every step of the pilot except the generation itself is now proven on real inputs rather than fixtures. The generation is the part that needs a card. |
-| 5 | First characterization pass → `cost_coefficients.json` | ❌ | `characterize.py` and the coefficient fit are written and tested. There is no `bench/cost_coefficients.json`. The coefficients do not exist. |
-| 6 | Measure `cold_start_s` for both models | ❌ | Needs a real vLLM startup to time. Nothing to report. |
+| 2 | Sweep runner, rollout store, resume, cost model | ✅ | End to end, 281 tests green in ~6 s, no GPU and no network |
+| 3 | vLLM at TP=1, 1.5B on GPU0 / 7B on GPU1 | ✅ | Both arms served on real vLLM (0.11.0, bf16, TP=1) and swept through the offline engine. One card, so they ran sequentially rather than one per GPU — see the hardware note. Getting here took five environment fixes: vLLM 0.27 needs UVA that WSL2 does not expose, transformers 5.x removed a tokenizer attribute vLLM 0.11 calls, flashinfer's sampler JIT-compiles with an absent `nvcc`, Inductor needs a C compiler, and prefix caching had to be disabled for measurement. |
+| 4 | 200-task pilot sweep → R2 for grading | ✅ | `2026-08-13-c76a55d-4f4767`, sealed and publishable. 1200 rows, 0 failed, 1.00% truncated, 187.4 s. Every row carries extracted `code`, so R2 receives code and never raw model output. **Ready for grading; the accuracy gap is R2's number, not mine.** |
+| 5 | First characterization pass → `cost_coefficients.json` | ✅ | `bench/cost_coefficients.json` is committed at `c76a55d`. Both arms, batch 1 and 8, fitted from measured timings on a warmed server with prefix caching off. |
+| 6 | Measure `cold_start_s` for both models | ✅ | 28.20 s small, 55.36 s large. Reported separately and excluded from the routing objective. |
 
 ### Standing responsibilities (ROLES.md)
 
@@ -202,13 +229,13 @@ Split into two columns on purpose — collapsing them is how "built" gets read a
 
 | Responsibility | Built | Measured on real hardware |
 |---|---|---|
-| vLLM offline batch sweeps | ✅ | ❌ |
-| vLLM OpenAI server for characterization | ✅ | ❌ |
-| Arm implementations | ✅ | ❌ |
-| Prompt templates, versioned and hashed | ✅ | ❌ |
-| Resumable one-command sweep runner | ✅ | ❌ |
-| Cost/latency characterization pass | ✅ | ❌ |
-| Code extraction (mine, not R2's) | ✅ | ❌ |
+| vLLM offline batch sweeps | ✅ | ✅ 1200 cells, 187.4 s, batch 256 |
+| vLLM OpenAI server for characterization | ✅ | ✅ 384 timed probes across both arms |
+| Arm implementations | ✅ | ✅ `direct_small` and `direct_large`, 600 rows each |
+| Prompt templates, versioned and hashed | ✅ | ✅ `params_hash` on all 1200 rows; server sent explicit temperature/top_p/max_tokens/seed |
+| Resumable one-command sweep runner | ✅ | ✅ one command, sealed on completion |
+| Cost/latency characterization pass | ✅ | ✅ `cost_coefficients.json`, 4 fits |
+| Code extraction (mine, not R2's) | ✅ | ✅ 1200/1200 rows yielded code |
 
 Seven arms are registered, not two: `direct_small` / `direct_large`, their
 `_notests` variants, `probe_small`, and `repair_small` / `repair_large`. The
@@ -221,33 +248,45 @@ they stop the arm registry being reshaped mid-project.
 |---|---|---|
 | A sweep is one command | ✅ | `orch-workers sweep` |
 | It is resumable | ✅ | Keyed on `(task_id, arm, seed, params_hash)`, tested |
-| Imputed latency correlates with wall-clock at **R² > 0.9** | ❌ | The check is implemented — `orch-workers validate`, non-zero exit below 0.9. It has never run against real data, so the R² is not low, it is **absent**. |
+| Imputed latency correlates with wall-clock at **R² > 0.9** | ✅ | **R²=0.9997** (1.5B) and **R²=1.0000** (7B), n=50 each, RMSE 0.021 s and 0.013 s. `orch-workers validate` exits 0 on both. |
 
-R1 is not done. Two of three clauses are code properties I can prove today; the
-third is a measurement, and it is the one the rest of the project leans on.
+The R² is **out-of-sample**. The coefficients are fitted on a synthetic prefill ×
+`max_tokens` grid; they are validated against batch=1 serving rows over 50 real
+tasks per arm, which no part of the fit ever saw. Validating on the probe grid
+that produced the fit would have been a refit reported as a check.
+
+Two caveats kept in view rather than smoothed away. The batch=8 fits are weaker
+than batch=1 (holdout R² 0.9325 and 0.8429); batch=1 is the reference batch that
+defines cost and imputed latency, so the clause rests on the stronger fit, but
+anyone quoting a batch=8 number should know its spread. And the two serving runs
+carry a `-dirty` stamp from a CRLF/LF mismatch between Windows and WSL git,
+since corrected — the code that produced them was genuinely `25c3f3f`; only the
+flag was wrong. The headline sweep stamps clean.
+
+**All three clauses hold.** R1's definition of done is met.
 
 ### What unblocks what
 
-Nothing downstream of me is waiting on code, and as of 13 Aug nothing upstream
-of me is missing either. R2's manifest landed; **GPU access is now the single
-remaining blocker** on rows 3–6, and it is the one item on this page that no
-amount of my own work can clear.
+Nothing upstream of me is missing and nothing downstream is waiting on me.
+R2's manifest landed, the GPU was released, and rows 3–6 closed on it.
 
-That blocker is now specific rather than general. The card is not absent, it is
-**occupied**: 22.4 GB of 24.5 GB and 95% utilisation held by an unrelated
-`llama-server` (Llama-3.1-8B Q4_K_M, 129k context, fully offloaded), leaving
-**1.8 GB free**. That is not enough for the small arm's 3.1 GB of weights before
-any KV cache, and the large arm needs roughly 23 GB with its cache. Quantising
-only the small arm to fit would confound model scale with quantisation damage
-and is forbidden three sections up, so there is no version of this that runs in
-1.8 GB.
+**R2 is unblocked now.** `2026-08-13-c76a55d-4f4767` is sealed, publishable, and
+carries extracted `code` on all 1200 rows — grading can start against it without
+touching a GPU or re-running generation. **R3 and R4 are unblocked too**: the
+rollout store exists with a real `run_id`, and its cost sidecar
+(`cost/b2f8305a.jsonl`) gives 2820.0 GPU-seconds and per-row imputed latency to
+build a frontier on.
 
-Rows 3–6 therefore need the card released, not more preparation. Preparation is
-finished: vLLM is installed, the weights are on disk, and the pipeline has been
-driven across the real corpus. What used to be "a day's work once a card is
-available" is now closer to an afternoon, and the three bugs above are the
-reason that estimate is worth anything — each would have cost a GPU session to
-find.
+The accuracy gap `A_large − A_small ≥ 8pp` is deliberately **not** on this page.
+Grading is R2's, and the separation is what makes the number trustworthy — I
+generate, I never grade. What I can say is that the arms are differentiated in
+cost by a factor of 3.9× in decode, which is the axis the routing question
+trades against.
+
+Re-costing this run on different hardware needs no regeneration: re-run
+`characterize` there and `impute` writes a second sidecar beside the first.
+That is what the three-tier cost model was for, and it is now exercised rather
+than asserted.
 
 Phase 0's number is `A_large − A_small ≥ 8pp`. Expect ~20pp from 1.5B vs 7B. If
 the arms aren't differentiated, **shrink the small model** — drop to 0.5B before
