@@ -121,10 +121,23 @@ def to_task_record(problem: dict[str, Any], dataset: str) -> dict[str, Any] | No
 
     return {
         "task_id": task_id,
+        "dataset": dataset,
         "prompt": problem["prompt"],
         "entrypoint": entry_point,
-        "tests": hidden_tests,
         "visible_tests": visible_tests,
+        "hidden_tests": hidden_tests,
+        # Duplicate of hidden_tests, read by R1's *current* `corpus.py`
+        # (`_TESTS_KEYS`), which predates R4's schema freeze and doesn't yet
+        # look for `hidden_tests`. Both are the same content; drop `tests`
+        # once R1's loader reads the frozen field name instead. Until then
+        # this is what keeps the sweep unblocked without editing R1's file.
+        "tests": hidden_tests,
+        "contamination": {
+            "filtered": False,
+            "reason": None,
+            "cutoff_date": None,
+            "source_url": "https://github.com/evalplus/evalplus",
+        },
         "metadata": {
             "dataset": dataset,
             "source": "evalplus",
@@ -216,6 +229,20 @@ def build_pilot(out_path: Path | str, datasets: list[str],
             continue
         by_dataset_count[dataset] = n_so_far + 1
         selected.append(rec)
+
+    # The frozen contract (schemas/task.schema.json) is the authority on
+    # what a task row must look like. Validating here, not just trusting the
+    # generator, is what "sign off on schemas/" means in practice — a schema
+    # drift shows up as a build failure, not a surprise three roles later.
+    from schemas import ValidationError, validate_task
+    for rec in selected:
+        try:
+            validate_task(rec)
+        except ValidationError as exc:
+            raise GraderError(
+                f"generated task {rec['task_id']!r} does not conform to "
+                f"schemas/task.schema.json: {exc}"
+            ) from exc
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8", newline="") as fh:

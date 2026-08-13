@@ -14,6 +14,7 @@ from orchestrator.graders.corpus_build import (
 )
 from orchestrator.graders.pytest_grader import PytestGrader
 from orchestrator.types import Task
+from schemas import validate_task
 
 ADD_PROBLEM = {
     "task_id": "Test/1",
@@ -59,6 +60,15 @@ def test_to_task_record_shape():
 
 def test_to_task_record_returns_none_for_unconvertible():
     assert to_task_record(BROKEN_PROBLEM, "testset") is None
+
+
+def test_to_task_record_conforms_to_frozen_schema():
+    """R4's schemas/task.schema.json is the authority, not this module's own
+    idea of what a task looks like — validate against the real thing."""
+    record = to_task_record(ADD_PROBLEM, "testset")
+    validate_task(record)  # raises ValidationError on drift
+    assert record["dataset"] == "testset"
+    assert record["hidden_tests"] == record["tests"]  # bridge field, same content
 
 
 def test_generated_tests_are_actually_gradeable():
