@@ -92,16 +92,39 @@ def test_require_tests_is_opt_in(tmp_path):
         load_tasks(path, require_tests=True)
 
 
-@pytest.mark.parametrize("shape", ["flat", "by_split", "nested"])
+@pytest.mark.parametrize("shape", ["flat", "by_split", "nested", "task_ids"])
 def test_split_manifest_shapes(tmp_path, shape):
     path = tmp_path / "splits.json"
     data = {
         "flat": {"a": "train", "b": "test"},
         "by_split": {"train": ["a"], "test": ["b"]},
         "nested": {"splits": {"a": "train", "b": "test"}},
+        "task_ids": {"task_ids": {"a": "train", "b": "test"}},
     }[shape]
     path.write_text(json.dumps(data))
     assert load_splits(path) == {"a": "train", "b": "test"}
+
+
+def test_sibling_metadata_is_not_read_as_task_ids(tmp_path):
+    """R4's manifest puts the mapping under `task_ids` and sits it beside
+    string metadata. Reading the top level flat turns `corpus_hash`, `name`
+    and `salt` into three task ids and leaves every real task unassigned."""
+    path = tmp_path / "splits.json"
+    path.write_text(json.dumps({
+        "corpus_hash": "fcc0a6fd", "name": "pilot_200", "salt": "pilot-2026-08-13",
+        "n_tasks": 2, "task_ids": {"a": "train", "b": "test"},
+    }))
+    assert load_splits(path) == {"a": "train", "b": "test"}
+
+
+def test_a_manifest_that_assigns_nothing_is_an_error(tmp_path):
+    """Silently unassigning every task makes `--include-splits` inert, so the
+    test-split fence stops fencing without anyone being told."""
+    corpus_path = write_corpus(tmp_path / "t.jsonl", n=3)
+    splits_path = tmp_path / "splits.json"
+    splits_path.write_text(json.dumps({"not/a/real/id": "train"}))
+    with pytest.raises(CorpusError, match="assigns no task"):
+        build_corpus(corpus_path, splits_path)
 
 
 def test_splits_attach_to_tasks(tmp_path):

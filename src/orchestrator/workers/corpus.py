@@ -162,9 +162,15 @@ def load_splits(path: Path | str) -> dict[str, str]:
                 out[str(task_id)] = str(split)
         return out
 
-    # `{"task_id": "train"}`, possibly nested under a "splits" key.
-    if "splits" in data and isinstance(data["splits"], dict):
-        data = data["splits"]
+    # `{"task_id": "train"}`, possibly nested under a container key. R4's
+    # committed manifest uses `task_ids` and carries sibling metadata
+    # (`corpus_hash`, `name`, `salt`) that are strings too — without checking
+    # the container keys first, the flat branch below harvests that metadata
+    # as if it were three task ids and every real task comes back unassigned.
+    for container in ("splits", "task_ids"):
+        if isinstance(data.get(container), dict):
+            data = data[container]
+            break
     return {str(k): str(v) for k, v in data.items() if isinstance(v, str)}
 
 
@@ -228,13 +234,30 @@ def build_corpus(tasks_path: Path | str,
     tasks = load_tasks(tasks_path)
 
     splits: dict[str, str] = {}
+    manifest_splits: dict[str, str] = {}
     if splits_path is not None:
-        splits.update(load_splits(splits_path))
+        manifest_splits = load_splits(splits_path)
+        splits.update(manifest_splits)
     # A split carried on the task record itself is a fallback for the period
     # before R4's manifest exists. The manifest wins where both are present.
     for task in tasks:
         if task.task_id not in splits and task.metadata.get("split"):
             splits[task.task_id] = str(task.metadata["split"])
+
+    # A split manifest that matches no task is a format mismatch, not an empty
+    # split. Left silent it degrades into "everything unassigned", which makes
+    # `--include-splits` inert and hides the fact that the test-split fence is
+    # no longer fencing anything. Checked against the manifest's own mapping,
+    # not the merged one: splits carried on the task records would otherwise
+    # mask a manifest that contributed nothing.
+    if splits_path is not None and not any(
+        t.task_id in manifest_splits for t in tasks
+    ):
+        raise CorpusError(
+            f"{splits_path}: split manifest assigns no task in {tasks_path}; "
+            f"the two files disagree on task ids or the manifest shape is not "
+            f"recognised"
+        )
 
     if include_splits is not None:
         wanted = {str(s) for s in include_splits}
