@@ -498,7 +498,7 @@ def read_cost_sidecar(root: Path | str, run_id: str,
     return out
 
 
-def read_task_features(tasks_path: Path | str) -> dict[str, dict[str, str]]:
+def read_task_features(tasks_path: Path | str) -> dict[str, dict[str, Any]]:
     """Load the prompt-side fields R2's manifest contributes, and nothing else.
 
     The rollout row carries no prompt — it carries what the model produced and
