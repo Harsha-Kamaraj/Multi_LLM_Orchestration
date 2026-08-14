@@ -153,10 +153,10 @@ Output:  policy.pkl + decisions.parquet, one per (policy, λ)
 
 ## Status — 14 Aug 2026
 
-Phases 2–4 merged as `10a512f`, Phase 5 as `3bbb569`. 923 tests green, no GPU
-and no network. Everything below is measured on synthetic fixtures: **no number
-here has touched the real pilot yet**, and that gap is the top item in the
-table.
+Phases 2–4 merged as `10a512f`, Phase 5 as `3bbb569`, Phase 6 as `9b7374d`.
+951 tests green, no GPU and no network. Everything below is measured on
+synthetic fixtures: **no number here has touched the real pilot yet**, and that
+gap is now the only thing standing between this project and its Phase 0 verdict.
 
 | | Item | Where it stands |
 |---|---|---|
@@ -166,10 +166,10 @@ table.
 | ✅ | D0 and D1 feature builders, each feature declaring its decision point | `features/` — 13 at D0, 34 at D1, D0 a verified subset of D1. Declared columns are checked against `observable_at()` at construction, *and* each feature is handed a `RowView` that raises on any undeclared read. The second layer is what makes the first trustworthy. |
 | ✅ | Three value heads — `P_pass`, `E_cost`, `E_latency` | `heads.py`, fitted per arm. `E_cost` predicts **prefill and decode tokens**; conversion to GPU-seconds, latency and USD happens at scoring time through R1's pinned `CostCoefficients`, so a change of instance price is not a retrain. |
 | ✅ | Calibration to ECE < 0.05 | `calibration.py`. Isotonic on `val`, ECE measured by cross-fitting with folds **grouped by task**. See the note below: at pilot scale isotonic is often measurably worse than doing nothing, and the code records that decision rather than hiding it. |
-| ❌ | The λ-sweep and `decisions.parquet` | Phase 6, not written. **This is what R4 is blocked on.** |
+| ✅ | The λ-sweep and `decisions.parquet` | `decide.py` — `argmax_a [P_pass − λ·E_cost]` over a frozen 121-point log grid, written as Parquet with JSONL as the authoritative copy. Verified against R4's own code: decisions replayed through `eval.policies.from_decisions` run, and at the degenerate ends reproduce `always_large` and `always_small` **exactly**, which is the check that the cost accounting agrees. |
 | ✅ | Recover the planted signal end to end | On a 500-task fixture: `AUC_D0 = 0.6464 [0.5485, 0.7384]`, `AUC_D1 = 0.8584 [0.8009, 0.9086]`, gap `+0.2120`. Both land inside ROADMAP's predicted bands, and nothing is tuned. |
 | ❌ | Measure `AUC_D0` and `AUC_D1` on the pilot | **The last two unmeasured quantities in the Phase 0 gate, and both are R3's.** R1 swept `2026-08-13-c76a55d-4f4767` and R2 graded all 1200 rows on 13 Aug, so the data exists — but `runs/` is gitignored, so the graded store is not in the repo and R3 has never read it. `orch-policy gate` runs the moment that directory is available. |
-| ❌ | Sign off on `schemas/` by day 3 | Missed, and not recoverable — the contract R3 consumes was frozen without this seat's review. Three consequences are open with R4 and R2: the rollout row carries no prompt, R1's Parquet `extra` does not satisfy `rollout.schema.json`, and the `generations/` vs `rollouts/` layer split is not in the schema. |
+| ❌ | Sign off on `schemas/` by day 3 | Missed, and not recoverable — the contract R3 consumes was frozen without this seat's review. Four consequences are open with R4 and R2: the rollout row carries no prompt, R1's Parquet `extra` does not satisfy `rollout.schema.json`, the `generations/` vs `rollouts/` layer split is not in the schema, and there is no entry point for replaying a **D1** policy (below). |
 
 The three leakage guarantees this package claims are enforced in code rather
 than in review, which is the right shape: R4's independent audit
@@ -203,6 +203,39 @@ calibration — the measurement is what licenses the choice.
 Reporting ECE in-sample would have hidden all of this: isotonic drives the
 in-sample number to 0.0000 on any data at all, and a test pins that value
 precisely so the cross-fitting cannot quietly stop happening.
+
+### A D1 policy has nowhere to be replayed
+
+`eval.policies.from_decisions` replays one action per task and charges for that
+arm. That is exactly a D0 routing decision, and `decisions.parquet` feeds it
+directly.
+
+A D1 policy decides something structurally different — *whether to escalate*,
+after the cheap arm has already generated. Replaying that as "the action was
+`large`" charges for the large arm alone and discards the small arm's cost,
+which is already spent and cannot be un-spent. The result would understate the
+policy's cost and flatter it against every cascade baseline it is meant to be
+compared with.
+
+So `decide.py` **refuses** a D1 policy rather than emitting it in a shape that
+lies. Closing this needs a cascade-accounting entry point on R4's side; until
+then `learned_D1` cannot enter the comparison, even though its heads are fitted
+and its AUC is the strongest number R3 has.
+
+### The frontier is narrow, and that is the D0 weakness again
+
+The frozen λ grid is 121 points across six decades — twenty per decade, which
+looks excessive until you sweep it. The region where tasks route *both* ways
+spans about a fifth of a decade. At four points per decade the entire trade-off
+collapses to a single λ and the frontier renders as one cliff.
+
+The cause is not the grid. An arm is chosen over a cheaper one when the quality
+gap beats λ times the cost gap, so tasks flip at `Δp / Δcost`. A D0 policy that
+separates tasks weakly predicts nearly the same `Δp` for all of them, so they
+all flip at nearly the same λ. **A narrow frontier is what a weak router looks
+like at decision time**, and it is the same finding as `AUC_D0 ≈ 0.65` arriving
+through a second route. `Sweep.summary` says so out loud when fewer than three
+λ values route both ways, rather than printing a tidy cliff.
 
 ---
 
