@@ -114,6 +114,20 @@ def test_a_constant_column_passes_through_rather_than_dividing_by_zero(
         assert np.isfinite(scaled.column(name)).all()
 
 
+def test_a_constant_column_is_centred_to_zero_not_left_alone(loaded, matrix):
+    """`scale=1.0` avoids the division; it does not skip the centring.
+
+    Worth pinning because it is easy to describe as "passed through untouched",
+    which is a different behaviour that no test would have caught.
+    """
+    scaler = fit_standardizer(matrix, loaded.rows)
+    scaled = scaler.transform(matrix)
+    for name in scaler.constant_columns:
+        np.testing.assert_allclose(scaled.column(name), 0.0, atol=1e-12)
+        index = scaler.names.index(name)
+        assert scaler.scale[index] == 1.0
+
+
 def test_transform_refuses_a_different_feature_set(loaded, matrix):
     from orchestrator.policy.features.d1 import D1_FEATURES
 

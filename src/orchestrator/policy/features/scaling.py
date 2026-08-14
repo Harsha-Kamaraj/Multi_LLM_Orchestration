@@ -24,8 +24,12 @@ that a silent success would hide.
 A constant column gets a scale of 1.0, not 0.0. Dividing by its true standard
 deviation is a division by zero; the resulting column of infinities then
 propagates through the fit and produces a model whose coefficients are all NaN,
-several steps away from the cause. A constant column carries no information
-either way, so passing it through untouched loses nothing and stays debuggable.
+several steps away from the cause.
+
+Such a column is still centred like every other one — which, being constant,
+sends it to exactly zero — and is then divided by 1.0 rather than by zero. It
+carries no information either way, so a column of zeros loses nothing and is
+visibly inert when something downstream misbehaves.
 """
 
 from __future__ import annotations
@@ -55,7 +59,8 @@ class Standardizer:
     scale: tuple[float, ...]
     fitted_on: tuple[str, ...]
     n_rows: int
-    #: Columns with no variance in the fitting split, passed through unscaled.
+    #: Columns with no variance in the fitting split. Centred like any other
+    #: column — to exactly zero — but divided by 1.0 rather than by zero.
     constant_columns: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
