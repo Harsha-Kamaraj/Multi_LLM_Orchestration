@@ -43,6 +43,7 @@ from .heuristics import (
 from .leakage import AuditReport, Finding, audit
 from .policies import Outcome, standard_baselines
 from .report import Report, build, compare_to_golden, format_table
+from .taxonomy import Taxonomy, classify, classify_store, explain_gap
 from .stats import (
     Interval,
     McNemarResult,
@@ -66,6 +67,10 @@ __all__ = [
     "Outcome",
     "Point",
     "Report",
+    "Taxonomy",
+    "classify",
+    "classify_store",
+    "explain_gap",
     "Rollouts",
     "StoreError",
     "TestSplitError",

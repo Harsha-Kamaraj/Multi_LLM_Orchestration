@@ -1,12 +1,13 @@
 """`orch-eval` — the command line R4 actually runs.
 
-Five subcommands, matching the five things R4 does:
+Six subcommands, matching the six things R4 does:
 
     report   build results.json from a pinned run_id
     audit    run the leakage audit, exit non-zero if blocked
     power    how many tasks are needed, from measured discordance
     golden   diff a fresh report against the committed golden file
     splits   build or verify the frozen train/val/test manifest
+    taxonomy why generations failed, attributed per arm
 
 Every store-reading subcommand requires an explicit `--run-id`. Nothing reads
 "latest": a report whose inputs depend on directory mtime is not reproducible,
@@ -32,6 +33,7 @@ from .splits import (
     verify as verify_splits,
 )
 from .stats import mcnemar_sample_size
+from .taxonomy import classify_store, explain_gap
 
 DEFAULT_LAMS = (0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5)
 
@@ -157,6 +159,21 @@ def cmd_splits(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_taxonomy(args: argparse.Namespace) -> int:
+    store = _load(args)
+    taxonomy = classify_store(store)
+    print(taxonomy)
+    if (dominant := taxonomy.dominant_failure()):
+        from .taxonomy import MEANING
+
+        print(f"\ndominant failure: {dominant} — {MEANING[dominant]}")
+    if (lines := explain_gap(taxonomy)):
+        print("\ngap attribution:")
+        for line in lines:
+            print(f"  {line}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="orch-eval", description="R4 evaluation harness"
@@ -189,6 +206,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_golden.add_argument("--resamples", type=int, default=10_000)
     p_golden.add_argument("--seed", type=int, default=0)
     p_golden.set_defaults(func=cmd_golden)
+
+    p_tax = sub.add_parser("taxonomy", help="why generations failed")
+    _add_store_args(p_tax)
+    p_tax.set_defaults(func=cmd_taxonomy)
 
     p_splits = sub.add_parser("splits", help="build or verify frozen splits")
     p_splits.add_argument("--corpus", required=True, help="R2 task manifest (jsonl)")

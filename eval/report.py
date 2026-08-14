@@ -42,6 +42,7 @@ from .leakage import AuditReport
 from .loading import Rollouts
 from .policies import Outcome
 from .stats import benjamini_hochberg, mcnemar_exact, paired_diff_bootstrap
+from .taxonomy import classify_store, explain_gap
 
 # Digits kept in the report. Six is far beyond anything reportable and far
 # short of float noise — the window where the file is both stable and honest.
@@ -204,6 +205,11 @@ def build(
         for name, points in sweep(policies, store, lams).items()
     }
 
+    # Why generations fail, not just how often. A 20-point gap made of timeouts
+    # is a serving problem; the same gap made of wrong answers is a capability
+    # problem; made of reward hacks the gap is not real at all.
+    taxonomy = classify_store(store)
+
     warnings = list(store.warnings)
     for name, summary in summaries.items():
         warnings.extend(f"{name}: {w}" for w in summary["confusion_warnings"])
@@ -219,6 +225,8 @@ def build(
         "bootstrap": {"n_resamples": n_resamples, "seed": seed, "level": 0.95},
         "multiplicity": {"method": "benjamini_hochberg", "q": q},
         "headroom": oracle_headroom(store),
+        "failure_taxonomy": taxonomy.as_dict(),
+        "gap_attribution": explain_gap(taxonomy),
         "policies": summaries,
         "comparisons": comparisons,
         "frontier": frontier,
