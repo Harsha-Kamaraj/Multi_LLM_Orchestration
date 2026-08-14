@@ -160,11 +160,12 @@ Output:  policy.pkl + decisions.parquet, one per (policy, λ)
 ## Status — 14 Aug 2026
 
 Phases 2–4 merged as `10a512f`, Phase 5 as `3bbb569`, Phase 6 as `9b7374d`,
-Phase 7 as `d096275`. 983 tests green, no GPU and no network.
+Phase 7 as `d096275`, Phase 8 as `f492700`. 1017 tests green, no GPU and no
+network.
 
-**R3's code is complete.** Everything below is measured on synthetic fixtures:
-no number here has touched the real pilot, and that is now the only thing
-standing between this project and its Phase 0 verdict.
+**R3's code is complete — all eight phases.** Everything below is measured on
+synthetic fixtures: no number here has touched the real pilot, and that is now
+the only thing standing between this project and its Phase 0 verdict.
 
 | | Item | Where it stands |
 |---|---|---|
@@ -178,6 +179,8 @@ standing between this project and its Phase 0 verdict.
 | ✅ | Recover the planted signal end to end | On a 500-task fixture: `AUC_D0 = 0.6464 [0.5485, 0.7384]`, `AUC_D1 = 0.8584 [0.8009, 0.9086]`, gap `+0.2120`. Both land inside ROADMAP's predicted bands, and nothing is tuned. |
 | ✅ | Repair ladder, and the leak that lives in it | `ladder.py` — chains assembled by walking `parent_rollout_id` to a root, cost cumulative along the path. **This closes the fifth of the five leaks named below**, structurally: `Ladder.upto(k)` returns a chain that does not *contain* the later steps, so a step-k caller cannot read step k+1 however hard it tries. |
 | ✅ | Self-consistency probe, charged | `decide.probe_surcharge` prices k=3 cheap draws and adds them to every arm. A test proves it does not move the argmax — it is paid before routing, so it shifts the policy rightward on the frontier and has to earn its cost through better decisions rather than free information. See the note below for why a probing router still cannot be run end to end. |
+| ✅ | Ablations: which feature groups carry the signal | `ablations.py` — leave-one-out and only-this-group variants, paired against the baseline over the *same* resampled tasks, with **simultaneous** intervals (Bonferroni across the family). Sixteen comparisons at 95% each is roughly a coin flip that one excludes zero by luck. |
+| ✅ | Freeze before R4 opens test | `freeze.py` — content hashes over `policy.pkl`, `calibration.json`, `feature_spec.json` and `decisions.jsonl`, **plus** the λ grid, gate thresholds and ECE target. The second half is the point: the same policy swept over a different grid produces a different frontier while every file hash still matches. |
 | ❌ | Measure `AUC_D0` and `AUC_D1` on the pilot | **The last two unmeasured quantities in the Phase 0 gate, and both are R3's.** R1 swept `2026-08-13-c76a55d-4f4767` and R2 graded all 1200 rows on 13 Aug, so the data exists — but `runs/` is gitignored, so the graded store is not in the repo and R3 has never read it. `orch-policy gate` runs the moment that directory is available. |
 | ❌ | Sign off on `schemas/` by day 3 | Missed, and not recoverable — the contract R3 consumes was frozen without this seat's review. Four consequences are open with R4 and R2: the rollout row carries no prompt, R1's Parquet `extra` does not satisfy `rollout.schema.json`, the `generations/` vs `rollouts/` layer split is not in the schema, and there is no entry point for replaying a **D1** policy (below). |
 
@@ -231,6 +234,34 @@ So `decide.py` **refuses** a D1 policy rather than emitting it in a shape that
 lies. Closing this needs a cascade-accounting entry point on R4's side; until
 then `learned_D1` cannot enter the comparison, even though its heads are fitted
 and its AUC is the strongest number R3 has.
+
+### The D0 → D1 gap is the visible-test outcome, and nothing else
+
+D1 adds three kinds of evidence at once, and only one of them is *observing
+failure*. Ablating each group at D1 on a 500-task fixture:
+
+| removed | AUC | paired delta (simultaneous) |
+|---|---|---|
+| `visible_outcome` | 0.6320 | **−0.2147 [−0.3846, −0.0930]** |
+| `generation_meta` | 0.8417 | −0.0051 [−0.0255, +0.0148] |
+| `keywords` | 0.8486 | +0.0019 [−0.0011, +0.0055] |
+| `prompt_shape` | 0.8496 | +0.0029 [−0.0069, +0.0128] |
+
+Baseline 0.8467. Removing the visible-test outcome lands at **0.632**, which is
+essentially `AUC_D0` — so the entire asymmetry is verification, not the
+candidate's appearance. That distinction decides what the finding *is*: "the
+visible tests tell you most of what the hidden tests will" is a claim about
+verification, while "longer, messier code is likelier to be wrong" would be a
+much more ordinary one.
+
+**Four groups ablate to exactly `+0.0000 [+0.0000, +0.0000]`, and that is not a
+result.** A genuinely useless group still wobbles under resampling; an exactly
+zero-width interval means the features were *constant*. `schemas.synth` writes a
+near-identical stub for every `code`, so every code-shape feature is flat and
+its ablation is vacuous. They are flagged rather than reported, because "removing
+this changed nothing" and "this column had no variation to remove" read
+identically in a table and mean opposite things. **On real data `code_shape`
+may well matter; this fixture cannot say.**
 
 ### Repair looks like a better buy than escalation — on invented semantics
 
@@ -305,6 +336,20 @@ planted signal inside its predicted band, and every arm clears the ECE target
 at D1. It is not met on the pilot, because R3 has not yet been given the graded
 store — and a definition of done evaluated only against fixtures is a statement
 about the code, not about the claim this project exists to test.
+
+### What is left, and none of it is code
+
+1. **The graded store.** R1 swept `2026-08-13-c76a55d-4f4767` and R2 graded all
+   1200 rows on 13 Aug, but `runs/` is gitignored so it has never reached R3.
+   `orch-policy gate --run <id> --tasks data/tasks/pilot_200.jsonl` closes the
+   last two Phase 0 quantities, one of which is the project's hard stop.
+2. **Two entry points only R4 can add** — cascade accounting for a D1 policy,
+   and a per-task surcharge so a probing policy is charged for its probe.
+   Without the first, `learned_D1` cannot enter the comparison at all, despite
+   having the strongest AUC R3 can produce.
+3. **Repair and probe rows.** R1 registered `probe_small` and `repair_small`
+   early and nothing has been run through either, so both are measured against
+   invented semantics.
 
 ---
 
