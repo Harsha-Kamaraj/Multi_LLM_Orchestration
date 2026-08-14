@@ -354,8 +354,8 @@ def test_there_is_no_train_flag_that_opens_the_test_split():
     train = [a for a in build_parser()._subparsers._group_actions[0].choices]
     assert "train" in train
     assert "--test" not in text and "test-split" not in text
-<<<<<<< HEAD
-=======
+
+
 
 
 # -- decide ------------------------------------------------------------------
@@ -418,4 +418,3 @@ def test_decide_refuses_a_d1_policy(fx, tmp_path, capsys):
           "--out", str(policy)])
     assert main(decide_argv(fx, policy)) == EXIT_ERROR
     assert "already spent" in capsys.readouterr().err
->>>>>>> origin/main
