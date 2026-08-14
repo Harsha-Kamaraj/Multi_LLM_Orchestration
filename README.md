@@ -169,11 +169,16 @@ Phase 0 gate has still not passed** — one of its four quantities is measured.
 |---|---|---|
 | `A_large − A_small` | ≥ 8 pp | ✅ **19.33 pp** |
 | `A_oracle − A_large` | ≥ 5 pp | ❌ needs R4's oracle study |
-| `AUC_D0` | ≥ 0.65 | ❌ needs R3's value heads |
+| `AUC_D0` | ≥ 0.65 | ❌ measurable — awaiting the graded store |
 | `AUC_D1` | ≥ 0.75 | ❌ **hard stop if it fails** |
 
-Outstanding: R3's feature builders and value heads, R4's frozen 1,000-task splits
-and oracle-gap study, and CI. 632 tests pass with no GPU and no network — a
+Both AUC quantities are one command away. R3's feature builders, value heads and
+gate are built and green (`orch-policy gate`), and on synthetic fixtures they
+recover `AUC_D0 = 0.65` and `AUC_D1 = 0.86`. What is missing is not code: `runs/`
+is gitignored, so the graded pilot store has never been on R3's machine.
+
+Outstanding: the graded store reaching R3, R4's frozen 1,000-task splits and
+oracle-gap study, and CI. 983 tests pass with no GPU and no network — a
 statement about the code, not about the claim this project exists to test.
 
 ---
