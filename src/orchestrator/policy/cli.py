@@ -5,12 +5,15 @@ is no subcommand that resolves "latest" and no flag that opens the test split;
 both absences are the enforcement rather than a check.
 
     orch-policy gate    --run <run_id> --tasks data/tasks/pilot.jsonl
+    orch-policy train   --run <run_id> --tasks data/tasks/pilot.jsonl --out policy/
     orch-policy fixture --out runs --tasks 400
     orch-policy runs
 
 `gate` exits non-zero when `AUC_D1` fails its threshold. That is ROADMAP.md's
 hard stop wired to a process exit code, so a scheduled run of it is a tripwire
-rather than something a human has to remember to read.
+rather than something a human has to remember to read. `train` does the same
+for ECE < 0.05: a policy whose probabilities are not probabilities should not
+pass quietly.
 
 **INCONCLUSIVE also exits non-zero.** An interval straddling the threshold has
 not cleared it; treating "cannot tell" as success is how a gate stops being a
@@ -103,6 +106,47 @@ def _cmd_gate(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_train(args: argparse.Namespace) -> int:
+    """Fit the three heads and calibrate them. Phase 5's deliverable.
+
+    Exits non-zero when an arm misses the ECE target, for the same reason the
+    gate does: an uncalibrated `P_pass` makes every λ on the frontier a
+    different, unknowable trade, so shipping one quietly is worse than failing
+    loudly.
+    """
+    from . import heads
+
+    data = store.load_rollouts(
+        args.root, args.run,
+        tasks_path=args.tasks,
+        cost_fingerprint=args.cost,
+        layer=args.layer,
+    )
+    policy = heads.fit_heads(
+        data, args.decision_point,
+        features=feature_set(
+            args.decision_point,
+            with_probe=args.with_probe and args.decision_point == "D1",
+        ),
+        n_folds=args.folds,
+        seed=args.seed,
+    )
+    print(policy.summary())
+
+    if args.out:
+        directory = policy.save(args.out)
+        print(f"\nwrote {directory}/")
+
+    if not data.publishable:
+        print(
+            "\nNOTE: this run is not publishable — anything fitted on it is "
+            "for development only.",
+            file=sys.stderr,
+        )
+
+    return EXIT_OK if policy.meets_calibration_target else EXIT_GATE_FAILED
+
+
 def _cmd_fixture(args: argparse.Namespace) -> int:
     from schemas.synth import SynthConfig
 
@@ -174,6 +218,25 @@ def build_parser() -> argparse.ArgumentParser:
     gate_cmd.add_argument("--out", type=Path, default=None,
                           help="write the verdict as JSON")
     gate_cmd.set_defaults(func=_cmd_gate)
+
+    train_cmd = sub.add_parser(
+        "train",
+        help="fit P_pass, E_cost and E_latency, and calibrate them",
+        description="Phase 5. Fits on train, calibrates on val, and exits "
+                    "non-zero if any arm misses ECE < 0.05.",
+    )
+    _add_run_arguments(train_cmd)
+    train_cmd.add_argument("--decision-point", choices=("D0", "D1"),
+                           default="D1")
+    train_cmd.add_argument("--with-probe", action="store_true",
+                           help="include sibling features at D1")
+    train_cmd.add_argument("--folds", type=int, default=5,
+                           help="cross-fitting folds for the honest ECE, "
+                                "grouped by task")
+    train_cmd.add_argument("--seed", type=int, default=0)
+    train_cmd.add_argument("--out", type=Path, default=None,
+                           help="directory for policy.pkl and its JSON sidecars")
+    train_cmd.set_defaults(func=_cmd_train)
 
     fixture_cmd = sub.add_parser(
         "fixture", help="write a synthetic run with a planted signal")
