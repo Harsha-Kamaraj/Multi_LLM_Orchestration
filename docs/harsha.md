@@ -109,6 +109,12 @@ Write the feature builder so each feature declares its decision point, and asser
 R4 runs an independent leakage audit and will find what you missed — that's the
 design, not a criticism. Make their job boring.
 
+**All five are closed in code, each structurally rather than by rule** —
+`_synth_*` quarantined into `RolloutData.latent`, normalization fitted on train
+only and refusing `test`, siblings excluded by identity, and ladder steps
+truncated away rather than merely forbidden. The pattern throughout: a feature
+builder is handed an object that does not *contain* what it must not read.
+
 ---
 
 ## Calibration is not optional
@@ -153,10 +159,12 @@ Output:  policy.pkl + decisions.parquet, one per (policy, λ)
 
 ## Status — 14 Aug 2026
 
-Phases 2–4 merged as `10a512f`, Phase 5 as `3bbb569`, Phase 6 as `9b7374d`.
-951 tests green, no GPU and no network. Everything below is measured on
-synthetic fixtures: **no number here has touched the real pilot yet**, and that
-gap is now the only thing standing between this project and its Phase 0 verdict.
+Phases 2–4 merged as `10a512f`, Phase 5 as `3bbb569`, Phase 6 as `9b7374d`,
+Phase 7 as `d096275`. 983 tests green, no GPU and no network.
+
+**R3's code is complete.** Everything below is measured on synthetic fixtures:
+no number here has touched the real pilot, and that is now the only thing
+standing between this project and its Phase 0 verdict.
 
 | | Item | Where it stands |
 |---|---|---|
@@ -168,6 +176,8 @@ gap is now the only thing standing between this project and its Phase 0 verdict.
 | ✅ | Calibration to ECE < 0.05 | `calibration.py`. Isotonic on `val`, ECE measured by cross-fitting with folds **grouped by task**. See the note below: at pilot scale isotonic is often measurably worse than doing nothing, and the code records that decision rather than hiding it. |
 | ✅ | The λ-sweep and `decisions.parquet` | `decide.py` — `argmax_a [P_pass − λ·E_cost]` over a frozen 121-point log grid, written as Parquet with JSONL as the authoritative copy. Verified against R4's own code: decisions replayed through `eval.policies.from_decisions` run, and at the degenerate ends reproduce `always_large` and `always_small` **exactly**, which is the check that the cost accounting agrees. |
 | ✅ | Recover the planted signal end to end | On a 500-task fixture: `AUC_D0 = 0.6464 [0.5485, 0.7384]`, `AUC_D1 = 0.8584 [0.8009, 0.9086]`, gap `+0.2120`. Both land inside ROADMAP's predicted bands, and nothing is tuned. |
+| ✅ | Repair ladder, and the leak that lives in it | `ladder.py` — chains assembled by walking `parent_rollout_id` to a root, cost cumulative along the path. **This closes the fifth of the five leaks named below**, structurally: `Ladder.upto(k)` returns a chain that does not *contain* the later steps, so a step-k caller cannot read step k+1 however hard it tries. |
+| ✅ | Self-consistency probe, charged | `decide.probe_surcharge` prices k=3 cheap draws and adds them to every arm. A test proves it does not move the argmax — it is paid before routing, so it shifts the policy rightward on the frontier and has to earn its cost through better decisions rather than free information. See the note below for why a probing router still cannot be run end to end. |
 | ❌ | Measure `AUC_D0` and `AUC_D1` on the pilot | **The last two unmeasured quantities in the Phase 0 gate, and both are R3's.** R1 swept `2026-08-13-c76a55d-4f4767` and R2 graded all 1200 rows on 13 Aug, so the data exists — but `runs/` is gitignored, so the graded store is not in the repo and R3 has never read it. `orch-policy gate` runs the moment that directory is available. |
 | ❌ | Sign off on `schemas/` by day 3 | Missed, and not recoverable — the contract R3 consumes was frozen without this seat's review. Four consequences are open with R4 and R2: the rollout row carries no prompt, R1's Parquet `extra` does not satisfy `rollout.schema.json`, the `generations/` vs `rollouts/` layer split is not in the schema, and there is no entry point for replaying a **D1** policy (below). |
 
@@ -221,6 +231,52 @@ So `decide.py` **refuses** a D1 policy rather than emitting it in a shape that
 lies. Closing this needs a cascade-accounting entry point on R4's side; until
 then `learned_D1` cannot enter the comparison, even though its heads are fitted
 and its AUC is the strongest number R3 has.
+
+### Repair looks like a better buy than escalation — on invented semantics
+
+ROADMAP's Phase 2 gate asks whether repair pays for itself. On a fixture ladder:
+
+| strategy | accuracy | cost | |
+|---|---|---|---|
+| `always_small` | 0.2573 | 1.0331 | the floor |
+| `repair_on_failure` | 0.4958 | 2.1240 | Δacc/Δcost = **0.219** |
+| `escalate_on_failure` | 0.5479 | 5.7145 | Δacc/Δcost = **0.062** |
+
+Escalation buys more accuracy; repair buys it about 3.5× more efficiently, and
+wins on utility for 77 of the 121 λ values. All three are charged the cheap
+attempt, because all three take it — the choice between repairing and escalating
+is only reachable *after* the cheap sample has failed, and charging repair for
+the repair alone would compare it against a baseline that never ran.
+
+**The repair success curve is invented.** Nothing has been run through R1's
+`repair_small` arm, so `fixtures.add_repair_ladder` plants a plausible
+structure — a candidate that passed three of four visible tests is more
+repairable than one that passed none — and the numbers above inherit it. The
+accounting is real; the result is not evidence about real repair.
+
+One bug worth recording, because it was live in exactly the state the real store
+is in today. With **no** repair rows, the repair strategy silently *becomes*
+`always_small`, which beats escalation at high λ purely by declining to spend —
+and the gate reported `PASS`, "repair pays for itself", having repaired nothing.
+There is now a third verdict, `NO REPAIRS`, and it exits non-zero.
+
+### A probing router has no decision point to live at
+
+The probe is bought *before* routing, which makes it a D0 decision. Its features
+read agreement across generations that have already happened, which are D1
+columns. `feature_set("D0", with_probe=True)` therefore refuses — correctly,
+and R3 wrote that refusal in Phase 3 without noticing it would later close this
+door.
+
+So the contract's two decision points are one short of the three surfaces this
+project actually has: route at D0, route after a paid probe, escalate at D1.
+Inventing the third unilaterally is a schema change needing all-four sign-off,
+so it is recorded as a test instead.
+
+Separately: `from_decisions` charges the logged cost of the chosen arm and knows
+nothing about a probe, so `probe_cost_per_task` is reported in the decisions
+manifest for R4 to add. Until they do, a probing policy would be compared at a
+cost it never paid.
 
 ### The frontier is narrow, and that is the D0 weakness again
 
