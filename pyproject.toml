@@ -9,7 +9,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-timeout>=2.3"]
+# `pytest` at the repo root collects every role's tests, so anything the shared
+# suite needs to *run* belongs here rather than in a role's extra. R3's gate
+# test fits a logistic regression, so scikit-learn is a test dependency of the
+# whole repo even though it is a runtime dependency of one role. The
+# alternative — skipping those tests when it is absent — turns a green suite
+# into a statement about what was installed rather than about what works.
+dev = ["pytest>=8.0", "pytest-timeout>=2.3", "scikit-learn>=1.4"]
 # R1's serving stack. Kept out of the base install so R3 and R4 — who need
 # neither a GPU nor model weights — are never blocked on a CUDA wheel.
 workers = ["vllm>=0.6", "transformers>=4.44"]
