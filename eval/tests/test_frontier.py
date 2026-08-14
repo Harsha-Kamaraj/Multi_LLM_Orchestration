@@ -162,9 +162,25 @@ def test_unsolvable_is_excluded_from_regret(store):
     assert 0.0 <= conf.regret <= 1.0
 
 
-def test_always_large_is_warned_about(store):
-    conf = confusion(always("large")(store), store)
-    assert any("always_large" in w for w in conf.warnings)
+def test_fixed_policies_are_not_warned_about_as_routers(store):
+    """A policy with one action is a fixed policy, not a degenerate router.
+    Warning that always_small behaves like always_small is noise, and noise in
+    a warning channel trains people to ignore it."""
+    for arm in ("small", "large"):
+        conf = confusion(always(arm)(store), store)
+        assert not any("effectively always" in w for w in conf.warnings), arm
+
+
+def test_a_real_router_stuck_at_one_extreme_is_warned_about(store):
+    """The warning must still fire on what it was built for: a router that
+    could escalate and almost never does."""
+    from eval.policies import random_route
+
+    conf = confusion(random_route(0.99)(store), store)
+    assert any("effectively always_large" in w for w in conf.warnings)
+
+    conf = confusion(random_route(0.01)(store), store)
+    assert any("effectively always_small" in w for w in conf.warnings)
 
 
 def test_oracle_headroom_sums_to_one(store):
