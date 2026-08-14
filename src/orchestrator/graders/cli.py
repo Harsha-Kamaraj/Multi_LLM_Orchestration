@@ -14,7 +14,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..types import Task
@@ -27,6 +29,12 @@ from .rollout_store import RolloutStore, read_manifest
 log = logging.getLogger("orch.grade")
 
 DEFAULT_RUNS_ROOT = Path("runs")
+
+# One container per row, each capped at --cpus 1 and --memory 512m, so the
+# ceiling is cores rather than RAM. Capped well below the core count: the
+# host still has to run dockerd and the pytest processes inside each
+# container, and oversubscribing makes every row's timeout budget tighter.
+DEFAULT_GRADE_WORKERS = max(1, min(16, (os.cpu_count() or 2) // 2))
 
 
 def _tasks_by_id(tasks_path: Path) -> dict[str, Task]:
@@ -51,6 +59,31 @@ def _make_grader(args: argparse.Namespace, *, publishable: bool) -> PytestGrader
     return PytestGrader(timeout_s=args.timeout_s, backend=backend, image=args.image)
 
 
+def _graded_in_order(grader: PytestGrader, pairs: list, workers: int):
+    """Yield `(generation, grade)` in manifest order, grading in parallel.
+
+    Safe to parallelise because grading is a pure function of `(task, code)`
+    and every call gets its own `mkdtemp` workdir plus its own container — the
+    isolation the sandbox already provides per row is exactly what makes rows
+    independent of each other.
+
+    Order is preserved deliberately. `ThreadPoolExecutor.map` runs ahead but
+    yields in input order, so the graded store is written in manifest order and
+    is byte-identical whatever order the containers happen to finish in. A
+    graded run that differed between two identical invocations would undermine
+    the purity this grader claims.
+    """
+    if workers <= 1:
+        for gen, task in pairs:
+            yield gen, grader.grade(task, gen.code)
+        return
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        grades = pool.map(lambda pair: grader.grade(pair[1], pair[0].code), pairs)
+        for (gen, _task), grade in zip(pairs, grades):
+            yield gen, grade
+
+
 def cmd_grade_run(args: argparse.Namespace) -> int:
     generations_root = args.runs_root
     # R1's run must already be sealed — grading an in-progress sweep would
@@ -60,19 +93,28 @@ def cmd_grade_run(args: argparse.Namespace) -> int:
     tasks = _tasks_by_id(args.tasks)
     grader = _make_grader(args, publishable=True)
 
+    pairs = []
+    n_missing_task = 0
+    for gen in read_generations(generations_root, args.run_id):
+        task = tasks.get(gen.task_id)
+        if task is None:
+            n_missing_task += 1
+            log.warning("no task manifest entry for %s; skipping", gen.task_id)
+            continue
+        pairs.append((gen, task))
+
+    workers = max(1, args.workers)
+    log.info("grading %d rows with %d worker(s) on the %s backend",
+             len(pairs), workers, args.backend)
+
     store = RolloutStore(generations_root, args.run_id).open()
-    n_graded = n_missing_task = 0
+    n_graded = 0
     try:
-        for gen in read_generations(generations_root, args.run_id):
-            task = tasks.get(gen.task_id)
-            if task is None:
-                n_missing_task += 1
-                log.warning("no task manifest entry for %s; skipping", gen.task_id)
-                continue
-            grade = grader.grade(task, gen.code)
-            row = {**gen.to_row(), **grade.to_row()}
-            store.append(row)
+        for gen, grade in _graded_in_order(grader, pairs, workers):
+            store.append({**gen.to_row(), **grade.to_row()})
             n_graded += 1
+            if n_graded % 100 == 0:
+                log.info("  graded %d/%d", n_graded, len(pairs))
     finally:
         manifest = store.seal()
 
@@ -129,6 +171,11 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--image", default=DEFAULT_DOCKER_IMAGE)
     run_p.add_argument("--timeout-s", type=float, default=60.0)
     run_p.add_argument("--unsafe-subprocess-local-only", action="store_true")
+    run_p.add_argument("--workers", type=int, default=DEFAULT_GRADE_WORKERS,
+                       help="rows graded concurrently. Grading is a pure "
+                            "function and each row gets its own container, "
+                            "so this changes only wall-clock; the store is "
+                            "still written in manifest order")
     run_p.set_defaults(func=cmd_grade_run)
 
     one_p = grade_sub.add_parser("one", help="grade a single (task, code) pair")
