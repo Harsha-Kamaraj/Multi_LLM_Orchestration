@@ -7,6 +7,7 @@ both absences are the enforcement rather than a check.
     orch-policy gate    --run <run_id> --tasks data/tasks/pilot.jsonl
     orch-policy train   --run <run_id> --tasks data/tasks/pilot.jsonl --out policy/
     orch-policy decide  --run <run_id> --policy policy/ --out decisions/
+    orch-policy repair  --run <run_id>
     orch-policy fixture --out runs --tasks 400
     orch-policy runs
 
@@ -193,6 +194,39 @@ def _cmd_decide(args: argparse.Namespace) -> int:
     return EXIT_OK if sweep.mixed_lambdas() else EXIT_GATE_FAILED
 
 
+def _cmd_repair(args: argparse.Namespace) -> int:
+    """ROADMAP Phase 2's gate: does repair pay for itself? Phase 7.
+
+    Exits non-zero on FAIL *and* on NO REPAIRS. The second is not a pass: with
+    no repair rows the repair strategy degenerates into `always_small`, which
+    beats escalation at high λ simply by declining to spend — a true statement
+    about doing nothing and a false answer to the question asked.
+    """
+    from . import ladder
+
+    data = store.load_rollouts(
+        args.root, args.run,
+        tasks_path=args.tasks,
+        cost_fingerprint=args.cost,
+        layer=args.layer,
+    )
+    result = ladder.measure_repair_gate(
+        data, cheap=args.cheap, expensive=args.expensive,
+    )
+    print(result.summary())
+
+    if args.out:
+        path = Path(args.out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(result.as_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8", newline="",
+        )
+        print(f"\nwrote {path}")
+
+    return EXIT_OK if result.verdict == "PASS" else EXIT_GATE_FAILED
+
+
 def _cmd_fixture(args: argparse.Namespace) -> int:
     from schemas.synth import SynthConfig
 
@@ -202,6 +236,7 @@ def _cmd_fixture(args: argparse.Namespace) -> int:
                     d0_signal=args.d0_signal, d1_fidelity=args.d1_fidelity),
         seed=args.seed,
         layout=args.layout,
+        with_ladder=args.with_ladder,
     )
     print(f"run_id     {fixture.run_id}")
     print(f"rows       {len(fixture.result.rows)}")
@@ -307,6 +342,19 @@ def build_parser() -> argparse.ArgumentParser:
                                  "authoritative JSONL")
     decide_cmd.set_defaults(func=_cmd_decide)
 
+    repair_cmd = sub.add_parser(
+        "repair",
+        help="measure whether repair pays for itself against escalation",
+        description="ROADMAP Phase 2's gate. Exits non-zero on FAIL and on "
+                    "NO REPAIRS, which is not a pass.",
+    )
+    _add_run_arguments(repair_cmd)
+    repair_cmd.add_argument("--cheap", default="small")
+    repair_cmd.add_argument("--expensive", default="large")
+    repair_cmd.add_argument("--out", type=Path, default=None,
+                            help="write the verdict as JSON")
+    repair_cmd.set_defaults(func=_cmd_repair)
+
     fixture_cmd = sub.add_parser(
         "fixture", help="write a synthetic run with a planted signal")
     fixture_cmd.add_argument("--out", type=Path, default=DEFAULT_ROOT)
@@ -315,6 +363,11 @@ def build_parser() -> argparse.ArgumentParser:
     fixture_cmd.add_argument("--d0-signal", type=float, default=0.40)
     fixture_cmd.add_argument("--d1-fidelity", type=float, default=0.82)
     fixture_cmd.add_argument("--seed", type=int, default=0)
+    fixture_cmd.add_argument("--with-ladder", action="store_true",
+                             help="add step-1 repair attempts seeded from each "
+                                  "failed cheap sample. Nothing has been run "
+                                  "through R1's repair arm yet, so this is the "
+                                  "only ladder that exists")
     fixture_cmd.add_argument("--layout", choices=("generations", "split"),
                              default="generations",
                              help="'split' reproduces the real two-layer shape: "
