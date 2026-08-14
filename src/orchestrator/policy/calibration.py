@@ -397,8 +397,13 @@ class CalibrationReport:
 
     @property
     def optimism(self) -> float:
-        """How much fitting and scoring on the same rows flattered the result."""
-        return self.ece_after - self.ece_cross_fitted
+        """How much fitting and scoring on the same rows flattered the result.
+
+        Positive, and usually most of `ece_after`: isotonic drives the in-sample
+        number to roughly zero whatever the data, so this is close to the whole
+        of the honest number.
+        """
+        return self.ece_cross_fitted - self.ece_after
 
     def summary(self) -> str:
         verdict = "MEETS" if self.meets_target else "MISSES"
