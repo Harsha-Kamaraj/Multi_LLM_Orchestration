@@ -32,6 +32,7 @@ from .frontier import (
     pareto_front,
     sweep,
 )
+from .gates import Gate, GateReport, evaluate as evaluate_gates
 from .heuristics import (
     ThresholdRule,
     TunedHeuristic,
@@ -40,6 +41,7 @@ from .heuristics import (
     tune,
     tuned_frontier,
 )
+from .html import render as render_html
 from .leakage import AuditReport, Finding, audit
 from .policies import Outcome, standard_baselines
 from .report import Report, build, compare_to_golden, format_table
@@ -59,6 +61,9 @@ __all__ = [
     "AuditReport",
     "Confusion",
     "Finding",
+    "Gate",
+    "GateReport",
+    "evaluate_gates",
     "Interval",
     "MatchedComparison",
     "McNemarResult",
@@ -68,6 +73,7 @@ __all__ = [
     "Point",
     "Report",
     "Taxonomy",
+    "render_html",
     "classify",
     "classify_store",
     "explain_gap",

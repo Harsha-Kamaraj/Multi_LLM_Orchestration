@@ -1,6 +1,6 @@
 """`orch-eval` — the command line R4 actually runs.
 
-Six subcommands, matching the six things R4 does:
+Seven subcommands, matching the seven things R4 does:
 
     report   build results.json from a pinned run_id
     audit    run the leakage audit, exit non-zero if blocked
@@ -8,6 +8,7 @@ Six subcommands, matching the six things R4 does:
     golden   diff a fresh report against the committed golden file
     splits   build or verify the frozen train/val/test manifest
     taxonomy why generations failed, attributed per arm
+    gate     adjudicate the four Phase 0 gate quantities
 
 Every store-reading subcommand requires an explicit `--run-id`. Nothing reads
 "latest": a report whose inputs depend on directory mtime is not reproducible,
@@ -32,6 +33,7 @@ from .splits import (
     read_corpus,
     verify as verify_splits,
 )
+from .gates import evaluate as evaluate_gates
 from .stats import mcnemar_sample_size
 from .taxonomy import classify_store, explain_gap
 
@@ -81,7 +83,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     print(format_table(report))
     if args.out:
         path = report.write(args.out)
-        print(f"\nwrote {path}")
+        print(f"\nwrote {path}\nwrote {path.parent / 'report.html'}")
     return 0
 
 
@@ -159,6 +161,19 @@ def cmd_splits(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gate(args: argparse.Namespace) -> int:
+    store = _load(args)
+    corpus = read_corpus(args.corpus) if args.corpus else None
+    report = evaluate_gates(store, corpus=corpus)
+    print(report)
+    if report.blocked:
+        print("\nPHASE 0 BLOCKED — a hard-stop gate failed", file=sys.stderr)
+        return 2
+    if not report.all_measured or report.failures:
+        return 1
+    return 0
+
+
 def cmd_taxonomy(args: argparse.Namespace) -> int:
     store = _load(args)
     taxonomy = classify_store(store)
@@ -206,6 +221,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_golden.add_argument("--resamples", type=int, default=10_000)
     p_golden.add_argument("--seed", type=int, default=0)
     p_golden.set_defaults(func=cmd_golden)
+
+    p_gate = sub.add_parser("gate", help="adjudicate the Phase 0 gate")
+    _add_store_args(p_gate)
+    p_gate.add_argument("--corpus", default=None,
+                        help="R2 task manifest; required to measure AUC_D0, "
+                             "whose features are not on the rollout row")
+    p_gate.set_defaults(func=cmd_gate)
 
     p_tax = sub.add_parser("taxonomy", help="why generations failed")
     _add_store_args(p_tax)

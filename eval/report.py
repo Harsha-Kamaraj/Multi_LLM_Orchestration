@@ -49,6 +49,7 @@ from .taxonomy import classify_store, explain_gap
 PRECISION = 6
 
 RESULTS_NAME = "results.json"
+HTML_NAME = "report.html"
 MANIFEST_NAME = "_MANIFEST.json"
 
 # Everything a policy is compared against. Named rather than inferred so a
@@ -105,9 +106,17 @@ class Report:
         results = out / RESULTS_NAME
         results.write_text(self.to_json(), encoding="utf-8")
 
+        # The human-facing half, rendered from the same payload so the two can
+        # never disagree. Imported here rather than at module scope because
+        # `html` imports `report` for its type.
+        from .html import render
+
+        (out / HTML_NAME).write_text(render(self), encoding="utf-8")
+
         manifest = {
             "run_id": self.run_id,
             "results": RESULTS_NAME,
+            "html": HTML_NAME,
             "sha256": _sha256(results),
             "python": ".".join(str(v) for v in sys.version_info[:3]),
             "numpy": np.__version__,
