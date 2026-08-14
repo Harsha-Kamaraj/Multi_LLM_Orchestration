@@ -39,20 +39,99 @@ a rule anyone has to remember, and not one a new code path can quietly skip.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
+from schemas.validate import ValidationError, rollout_schema, validate_rollout
+
 from ..workers.store import MANIFEST_NAME, PARQUET_NAME, ROWS_DIR
-from . import contract
-from .errors import SplitError, StoreReadError, UngradedRunError
+from . import contract, integrity
+from .errors import (
+    ContractError, SplitError, StoreIntegrityError, StoreReadError,
+    UngradedRunError,
+)
 
 #: Where R1's imputation pass writes cost sidecars, one per coefficient set.
 COST_DIR = "cost"
 
+
+@dataclass(frozen=True)
+class StoreLayer:
+    """One writable layer of a run directory, and how to read it.
+
+    A run has two, written by different roles and sealed independently:
+
+        runs/{run_id}/generations/  R1's, ungraded, sealed by _MANIFEST.json
+        runs/{run_id}/rollouts/     R2's, the same rows with grades filled in,
+                                    sealed by _ROLLOUT_MANIFEST.json
+
+    R2's grading pass reads R1's sealed generations and writes
+    `{**generation, **grade}` into its own directory rather than editing R1's
+    files, because a sealed run's manifest carries per-file checksums and
+    rewriting rows to add columns would invalidate every number already
+    computed from it.
+
+    R3's labels therefore live in `rollouts/`, and a reader that only knows
+    about `generations/` finds every grading column null and concludes the run
+    is ungraded — while the grades sit one directory over. That failure is
+    silent and total, which is why the layer is modelled explicitly here
+    instead of being a path constant.
+    """
+
+    name: str
+    rows_dir: str
+    manifest_name: str
+    parquet_name: str
+
+
+#: R2's graded layer. Constants are restated rather than imported from
+#: `graders.rollout_store` because that module is not on `main` yet — it lives
+#: on R2's branch. When it lands, the conformance test in `test_store.py` is
+#: what catches any disagreement between these values and theirs.
+GRADED_LAYER = StoreLayer(
+    name="rollouts",
+    rows_dir="rollouts",
+    manifest_name="_ROLLOUT_MANIFEST.json",
+    parquet_name="rollouts.parquet",
+)
+
+#: R1's ungraded layer, whose constants *are* importable and so are imported.
+GENERATED_LAYER = StoreLayer(
+    name="generations",
+    rows_dir=ROWS_DIR,
+    manifest_name=MANIFEST_NAME,
+    parquet_name=PARQUET_NAME,
+)
+
+#: Preference order when no layer is named. Graded first: it is the only layer
+#: that carries labels, and reading the ungraded one when a graded one exists
+#: would train on nothing.
+LAYERS: tuple[StoreLayer, ...] = (GRADED_LAYER, GENERATED_LAYER)
+
+#: The split vocabulary, read out of the ratified schema itself.
+_SCHEMA_SPLITS: tuple[str, ...] = tuple(
+    rollout_schema()["properties"]["split"]["enum"]
+)
+
 #: The splits R3 is entitled to. `test` is absent, and its absence is the
 #: enforcement — see the module docstring.
-ALLOWED_SPLITS: frozenset[str] = frozenset({"train", "val", "validation"})
+#:
+#: Derived from the schema's own enum rather than written out, so a contract
+#: change that adds a split cannot leave this list quietly stale. Only `test`
+#: is subtracted, and only here.
+ALLOWED_SPLITS: frozenset[str] = frozenset(_SCHEMA_SPLITS) - {"test"}
+
+#: Keys the synthetic generator rides along under `extra` so tests can assert
+#: against them. `_synth_difficulty` is the latent value no policy can observe;
+#: reading it is leakage, and R4's audit checks for exactly this key.
+#:
+#: They are stripped off every row at load and parked in `RolloutData.latent`,
+#: which is the same treatment labels get and for the same reason: a feature
+#: builder is handed `.rows`, so what is not in `.rows` cannot be read by
+#: accident. Leaving them in `extra` and trusting nobody to look would make
+#: R4's canary a test of R3's discipline rather than of R3's code.
+LATENT_PREFIX = "_synth_"
 
 #: The only fields that cross from R2's task manifest into a feature path.
 #: `Task.tests` holds the full suite and is left behind; so is any reference
@@ -60,6 +139,31 @@ ALLOWED_SPLITS: frozenset[str] = frozenset({"train", "val", "validation"})
 #: same reason — a template that cannot reach hidden tests cannot render them.
 TASK_FIELDS: tuple[str, ...] = ("task_prompt", "task_entrypoint",
                                 "task_visible_tests")
+
+#: A run swept from a dirty worktree carries this suffix.
+DIRTY_SUFFIX = "-dirty"
+
+
+def is_publishable(run_id: str, manifest: Mapping[str, Any]) -> bool:
+    """Whether anything derived from this run may be published.
+
+    A run swept from a dirty worktree is stamped `-dirty` and is not
+    publishable: the recorded git sha does not describe the code that produced
+    the rows. Developing against one is fine; reporting from one is not, and
+    Phase 6 stamps the decision file accordingly.
+
+    The `-dirty` suffix overrides the manifest rather than being read from it.
+    A manifest is written by the process that produced the run; a run_id is
+    what every consumer already pins. If the two disagree, the one that cannot
+    be quietly regenerated wins.
+
+    This lives at module scope because two callers need it and they must not
+    disagree: `RolloutData.publishable`, and `orch-policy runs`, which is where
+    an operator actually looks before deciding what to report from.
+    """
+    if run_id.endswith(DIRTY_SUFFIX):
+        return False
+    return bool(manifest.get("publishable", False))
 
 
 @dataclass(frozen=True)
@@ -95,20 +199,43 @@ class RolloutData:
     source: str
     cost_fingerprint: str | None = None
     tasks_path: str | None = None
+    #: Which layer the rows came from: R2's graded `rollouts` or R1's
+    #: ungraded `generations`.
+    layer: str = GENERATED_LAYER.name
+    #: R1's manifest, kept even when reading the graded layer. R2's manifest
+    #: records grading counts and carries no `publishable` key, so the
+    #: publishability of anything derived from this run has to come from the
+    #: layer that knows whether the worktree was clean.
+    generations_manifest: dict[str, Any] = field(default_factory=dict)
+    #: Planted ground truth on a synthetic run, keyed by `rollout_id`. Empty on
+    #: a real one. Held here rather than on the row so that a test can assert
+    #: against the planted signal while a feature builder structurally cannot
+    #: read it.
+    latent: Mapping[str, dict[str, Any]] = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.rows)
 
     @property
+    def is_synthetic(self) -> bool:
+        return bool(self.latent)
+
+    @property
+    def is_graded(self) -> bool:
+        """Whether these rows carry labels at all."""
+        return bool(self.labels)
+
+    @property
     def publishable(self) -> bool:
         """Whether anything derived from this run may be published.
 
-        A run swept from a dirty worktree is stamped `-dirty` and is not
-        publishable: the recorded git sha does not describe the code that
-        produced the rows. Developing against one is fine; reporting from one
-        is not, and Phase 6 stamps the decision file accordingly.
+        The rule itself is `is_publishable`, shared with the CLI. The only
+        thing decided here is *which* manifest carries the answer: R2's graded
+        manifest records grading counts and has no `publishable` key, so the
+        question is always put to R1's.
         """
-        return bool(self.manifest.get("publishable", False))
+        source = self.generations_manifest or self.manifest
+        return is_publishable(self.run_id, source)
 
     @property
     def has_cost(self) -> bool:
@@ -185,23 +312,74 @@ def list_cost_fingerprints(root: Path | str, run_id: str) -> list[str]:
     return sorted(p.stem for p in directory.glob("*.jsonl"))
 
 
-def read_manifest(root: Path | str, run_id: str) -> dict[str, Any]:
-    """Load the seal, or refuse the run because it has none."""
+def read_manifest(root: Path | str, run_id: str,
+                  layer: StoreLayer = GENERATED_LAYER) -> dict[str, Any]:
+    """Load a layer's seal, or refuse the run because it has none."""
     directory = run_dir(root, run_id)
     if not directory.exists():
         raise StoreReadError(
             f"no such run: {directory}. Nothing resolves 'latest' — pin an "
-            f"explicit run_id from `orch-workers runs`."
+            f"explicit run_id from `orch-policy runs`."
         )
-    path = directory / MANIFEST_NAME
+    path = directory / layer.manifest_name
     if not path.exists():
         raise StoreReadError(
-            f"run {run_id} has no {MANIFEST_NAME} and is not valid to read; it "
-            f"is either still running or was interrupted. Readers skip "
-            f"unsealed runs, which is what stops a partial sweep being read as "
-            f"a complete one."
+            f"run {run_id} has no {layer.manifest_name} and its "
+            f"{layer.name!r} layer is not valid to read; it is either still "
+            f"running or was interrupted. Readers skip unsealed runs, which is "
+            f"what stops a partial sweep being read as a complete one."
         )
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _layer_is_sealed(root: Path | str, run_id: str, layer: StoreLayer) -> bool:
+    return (run_dir(root, run_id) / layer.manifest_name).exists()
+
+
+def _layer_exists(root: Path | str, run_id: str, layer: StoreLayer) -> bool:
+    return (run_dir(root, run_id) / layer.rows_dir).exists()
+
+
+def select_layer(root: Path | str, run_id: str,
+                 name: str | None = None) -> StoreLayer:
+    """Choose which layer to read, preferring grades.
+
+    An unsealed graded layer is refused rather than silently skipped. Falling
+    back to `generations/` would report the run as ungraded when grading is
+    merely half-finished — and "ungraded" and "partially graded" call for
+    completely different actions.
+    """
+    directory = run_dir(root, run_id)
+    if not directory.exists():
+        raise StoreReadError(
+            f"no such run: {directory}. Nothing resolves 'latest' — pin an "
+            f"explicit run_id from `orch-policy runs`."
+        )
+
+    if name is not None:
+        for layer in LAYERS:
+            if layer.name == name:
+                return layer
+        raise StoreReadError(
+            f"unknown layer {name!r}; a run has {[l.name for l in LAYERS]}"
+        )
+
+    for layer in LAYERS:
+        if _layer_is_sealed(root, run_id, layer):
+            return layer
+        if _layer_exists(root, run_id, layer):
+            raise StoreReadError(
+                f"run {run_id} has a {layer.name!r} directory but no "
+                f"{layer.manifest_name}: grading is in progress or was "
+                f"interrupted. Reading the ungraded layer instead would report "
+                f"this run as never graded. Pass layer='generations' to "
+                f"inspect the generations regardless."
+            )
+
+    raise StoreReadError(
+        f"run {run_id} has no sealed layer; expected one of "
+        f"{[l.manifest_name for l in LAYERS]}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +387,9 @@ def read_manifest(root: Path | str, run_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _iter_jsonl(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str, Any]]]:
+def _iter_jsonl(root: Path | str, run_id: str,
+                layer: StoreLayer = GENERATED_LAYER,
+                ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Stream rows from the authoritative part files, with line numbers.
 
     A torn final line is skipped rather than raised on: a sweep killed
@@ -218,7 +398,7 @@ def _iter_jsonl(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str, 
     file and line, because a bare decode error on a six-thousand-row store is
     close to useless.
     """
-    rows_dir = run_dir(root, run_id) / ROWS_DIR
+    rows_dir = run_dir(root, run_id) / layer.rows_dir
     parts = sorted(rows_dir.glob("part-*.jsonl"))
     if not parts:
         raise StoreReadError(f"run {run_id} has no part files under {rows_dir}")
@@ -241,18 +421,39 @@ def _iter_jsonl(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str, 
             yield f"{part.name}:{lineno}", row
 
 
-def _iter_parquet(root: Path | str, run_id: str) -> Iterator[tuple[str, dict[str, Any]]]:
-    """Stream rows from the derived Parquet view."""
+def _iter_parquet(root: Path | str, run_id: str,
+                  layer: StoreLayer = GENERATED_LAYER,
+                  ) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Stream rows from the derived Parquet view.
+
+    `extra` is re-parsed here rather than downstream. R1 serializes it to a
+    JSON string before writing, because Arrow would otherwise infer a struct
+    from the first row and fail on the rest — which means the derived Parquet
+    does not satisfy `rollout.schema.json`, where `extra` is an object, while
+    the authoritative JSONL does.
+
+    Undoing it at the reader is the right place: it is the one point where the
+    two paths differ, so reconciling here is what makes "both paths produce the
+    same rows" true rather than aspirational. Doing it later would mean
+    validating one path against the contract and the other against a variant.
+    """
     import pyarrow.parquet as pq  # type: ignore[import-not-found]
 
-    path = run_dir(root, run_id) / ROWS_DIR / PARQUET_NAME
+    path = run_dir(root, run_id) / layer.rows_dir / layer.parquet_name
     table = pq.read_table(path)
     for index, row in enumerate(table.to_pylist()):
-        yield f"{PARQUET_NAME}:{index}", row
+        if isinstance(row.get("extra"), str):
+            try:
+                parsed = json.loads(row["extra"])
+            except json.JSONDecodeError:
+                parsed = {"_unparsed": row["extra"]}
+            row["extra"] = parsed if isinstance(parsed, dict) else {"_value": parsed}
+        yield f"{layer.parquet_name}:{index}", row
 
 
-def _parquet_available(root: Path | str, run_id: str) -> bool:
-    path = run_dir(root, run_id) / ROWS_DIR / PARQUET_NAME
+def _parquet_available(root: Path | str, run_id: str,
+                       layer: StoreLayer = GENERATED_LAYER) -> bool:
+    path = run_dir(root, run_id) / layer.rows_dir / layer.parquet_name
     if not path.exists():
         return False
     try:
@@ -297,7 +498,7 @@ def read_cost_sidecar(root: Path | str, run_id: str,
     return out
 
 
-def read_task_features(tasks_path: Path | str) -> dict[str, dict[str, str]]:
+def read_task_features(tasks_path: Path | str) -> dict[str, dict[str, Any]]:
     """Load the prompt-side fields R2's manifest contributes, and nothing else.
 
     The rollout row carries no prompt — it carries what the model produced and
@@ -309,13 +510,22 @@ def read_task_features(tasks_path: Path | str) -> dict[str, dict[str, str]]:
     from ..workers.corpus import load_tasks
 
     tasks = load_tasks(tasks_path)
-    out: dict[str, dict[str, str]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for task in tasks:
-        out[task.task_id] = {
+        joined: dict[str, Any] = {
             "task_prompt": task.prompt,
             "task_entrypoint": task.entrypoint,
             "task_visible_tests": str(task.metadata.get("visible_tests", "")),
         }
+        # Fixture-only. `schemas.synth` plants a prompt-only proxy for
+        # difficulty and the rollout row has nowhere to carry it, so the
+        # fixture's task manifest supplies it through the same channel a real
+        # prompt feature would use. Absent on a real corpus, and the key is
+        # simply omitted there rather than defaulted — a zero would be a
+        # feature value, and a constant one at that.
+        if "x_d0" in task.metadata:
+            joined["task_x_d0"] = float(task.metadata["x_d0"])
+        out[task.task_id] = joined
     return out
 
 
@@ -344,7 +554,11 @@ def load_rollouts(root: Path | str, run_id: str, *,
                   splits: Sequence[str] = ("train", "val"),
                   cost_fingerprint: str | None = None,
                   tasks_path: Path | str | None = None,
+                  layer: str | None = None,
                   require_grades: bool = True,
+                  validate_schema: bool = True,
+                  check_integrity: bool = True,
+                  skip_checks: Sequence[str] = (),
                   prefer_parquet: bool = True) -> RolloutData:
     """Load one pinned run as features and labels.
 
@@ -356,32 +570,85 @@ def load_rollouts(root: Path | str, run_id: str, *,
             is the honest default while no coefficients exist.
         tasks_path: R2's manifest. Without it the prompt-side D0 features
             cannot be built, because the rollout row carries no prompt.
+        layer: `rollouts` (R2's graded rows) or `generations` (R1's ungraded
+            ones). Defaults to whichever is sealed, preferring graded — the
+            labels only exist in R2's layer.
         require_grades: refuse a run R2 has not graded. Leave this on unless
             you are inspecting a sweep rather than training on one.
+        validate_schema: check every row against `rollout.schema.json`. Catches
+            per-field violations; the integrity checks catch the cross-field
+            and cross-row ones a schema cannot express.
+        check_integrity: run the corruption checks that produce plausible
+            numbers rather than exceptions. Turning this off is for inspecting
+            a store you already know is broken, never for starting a fit.
+        skip_checks: omit named checks by slug, same caveat.
     """
     wanted_splits = _check_splits(splits)
-    manifest = read_manifest(root, run_id)
+    selected = select_layer(root, run_id, layer)
+    manifest = read_manifest(root, run_id, selected)
 
-    use_parquet = prefer_parquet and _parquet_available(root, run_id)
-    reader = _iter_parquet if use_parquet else _iter_jsonl
+    # Kept regardless of which layer supplied the rows: R2's manifest records
+    # grading counts and says nothing about whether the sweep was publishable.
+    generations_manifest: dict[str, Any] = {}
+    if selected is not GENERATED_LAYER and _layer_is_sealed(
+            root, run_id, GENERATED_LAYER):
+        generations_manifest = read_manifest(root, run_id, GENERATED_LAYER)
+
+    use_parquet = prefer_parquet and _parquet_available(root, run_id, selected)
     source = "parquet" if use_parquet else "jsonl"
+
+    def reader(root_: Path | str, run_id_: str):
+        stream = _iter_parquet if use_parquet else _iter_jsonl
+        return stream(root_, run_id_, selected)
 
     costs = (read_cost_sidecar(root, run_id, cost_fingerprint)
              if cost_fingerprint is not None else {})
     task_features = (read_task_features(tasks_path)
                      if tasks_path is not None else {})
 
-    rows: list[dict[str, Any]] = []
-    labels: dict[str, Label] = {}
+    # Pass one: read and normalize everything, including the splits R3 may not
+    # train on. Integrity has to see the whole store — a task leaking across
+    # train and test is invisible from the train rows alone, and those are the
+    # only ones that survive the filter below.
+    all_rows: list[dict[str, Any]] = []
     seen_versions: set[int] = set()
-    n_total = 0
-    n_ungraded = 0
-
     for where, raw in reader(root, run_id):
-        n_total += 1
+        if validate_schema:
+            # Against the raw row, before coercion. Validating the normalized
+            # copy would check R3's coercions rather than the store, and the
+            # two failures need different fixes: one is a bad row, the other is
+            # a bad reader.
+            try:
+                validate_rollout(raw)
+            except ValidationError as exc:
+                raise ContractError(f"{where}: {exc}") from None
         row = contract.normalize_row(raw, where=where)
         seen_versions.add(int(row["schema_version"]))
+        all_rows.append(row)
 
+    if len(seen_versions) > 1:
+        from .errors import SchemaVersionError
+        raise SchemaVersionError(
+            f"run {run_id} mixes schema versions {sorted(seen_versions)}. A "
+            f"mixed-version store must be detectable, never silently averaged: "
+            f"two rows whose columns mean different things are two experiments."
+        )
+
+    if check_integrity:
+        issues = integrity.check_integrity(all_rows, skip=skip_checks)
+        if issues:
+            raise StoreIntegrityError(
+                integrity.format_issues(issues, run_id=run_id)
+            )
+
+    # Pass two: select, label, strip, join.
+    rows: list[dict[str, Any]] = []
+    labels: dict[str, Label] = {}
+    latent: dict[str, dict[str, Any]] = {}
+    n_total = len(all_rows)
+    n_ungraded = 0
+
+    for row in all_rows:
         if str(row.get("split") or "") not in wanted_splits:
             continue
 
@@ -404,6 +671,17 @@ def load_rollouts(root: Path | str, run_id: str, *,
         for column in contract.LABEL_COLUMNS:
             row.pop(column, None)
 
+        # Same treatment for the fixture's planted ground truth, which rides
+        # along under `extra` and is unobservable to any real policy.
+        extra = row.get("extra") or {}
+        planted = {k: v for k, v in extra.items() if k.startswith(LATENT_PREFIX)}
+        if planted:
+            latent[rollout_id] = {
+                k[len(LATENT_PREFIX):]: v for k, v in planted.items()
+            }
+            row["extra"] = {k: v for k, v in extra.items()
+                            if not k.startswith(LATENT_PREFIX)}
+
         if costs:
             priced = costs.get(rollout_id)
             if priced is not None:
@@ -415,28 +693,20 @@ def load_rollouts(root: Path | str, run_id: str, *,
             joined = task_features.get(str(row["task_id"]))
             if joined is None:
                 raise StoreReadError(
-                    f"{where}: task {row['task_id']!r} is in the run but not in "
-                    f"the manifest at {tasks_path}. The corpus does not match "
-                    f"the run — a sweep folds a corpus fingerprint into its "
-                    f"run_id precisely so this mismatch is visible."
+                    f"run {run_id}: task {row['task_id']!r} is in the run but "
+                    f"not in the manifest at {tasks_path}. The corpus does not "
+                    f"match the run — a sweep folds a corpus fingerprint into "
+                    f"its run_id precisely so this mismatch is visible."
                 )
             row.update(joined)
 
         rows.append(row)
 
-    if len(seen_versions) > 1:
-        from .errors import SchemaVersionError
-        raise SchemaVersionError(
-            f"run {run_id} mixes schema versions {sorted(seen_versions)}. A "
-            f"mixed-version store must be detectable, never silently averaged: "
-            f"two rows whose columns mean different things are two experiments."
-        )
-
     if not rows:
+        present = sorted({str(r.get("split") or "") for r in all_rows})
         raise StoreReadError(
             f"run {run_id} has {n_total} rows but none in splits "
-            f"{sorted(wanted_splits)}. Splits present: "
-            f"{sorted({str(r.get('split') or '') for _, r in reader(root, run_id)})}"
+            f"{sorted(wanted_splits)}. Splits present: {present}"
         )
 
     if require_grades and n_ungraded:
@@ -461,4 +731,7 @@ def load_rollouts(root: Path | str, run_id: str, *,
         source=source,
         cost_fingerprint=cost_fingerprint,
         tasks_path=str(tasks_path) if tasks_path is not None else None,
+        layer=selected.name,
+        generations_manifest=generations_manifest,
+        latent=latent,
     )

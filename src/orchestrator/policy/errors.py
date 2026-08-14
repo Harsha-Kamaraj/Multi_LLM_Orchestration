@@ -17,6 +17,8 @@ can forget to call.
 
 from __future__ import annotations
 
+from schemas.version import SchemaVersionError as ContractSchemaVersionError
+
 
 class PolicyError(Exception):
     """Base for everything R3 raises."""
@@ -32,12 +34,17 @@ class ContractError(PolicyError):
     """
 
 
-class SchemaVersionError(ContractError):
+class SchemaVersionError(ContractError, ContractSchemaVersionError):
     """The store mixes schema versions, or uses one this code cannot read.
 
     A mixed-version store must be *detectable*, never silently averaged — two
     rows whose `visible_total` means different things are two experiments, and
     a mean over both is a number about nothing.
+
+    Inherits from the contract package's error as well as R3's, so a caller
+    catching either hierarchy catches this. R4's leakage and conformance
+    tooling catches `schemas.SchemaVersionError`; R3's own code catches
+    `PolicyError`. Neither should have to know about the other.
     """
 
 
@@ -65,6 +72,16 @@ class StoreReadError(PolicyError):
     Covers a missing run directory, an unsealed run (readers skip those, which
     is what stops an interrupted sweep being read as a complete one), and a
     cost sidecar that was pinned but does not exist.
+    """
+
+
+class StoreIntegrityError(StoreReadError):
+    """The run is readable but corrupt in a way that would produce a number.
+
+    Distinct from `StoreReadError` because the store is not malformed — every
+    row parses, every column is the right type, and every statistic over it
+    would compute. That is exactly what makes these worth refusing: the failure
+    mode is a believable result, not an exception.
     """
 
 

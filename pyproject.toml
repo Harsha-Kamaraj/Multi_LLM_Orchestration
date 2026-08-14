@@ -9,7 +9,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-timeout>=2.3"]
+# `pytest` at the repo root collects every role's tests, so anything the shared
+# suite needs to *run* belongs here rather than in a role's extra. R3's gate
+# test fits a logistic regression, so scikit-learn is a test dependency of the
+# whole repo even though it is a runtime dependency of one role. The
+# alternative — skipping those tests when it is absent — turns a green suite
+# into a statement about what was installed rather than about what works.
+dev = ["pytest>=8.0", "pytest-timeout>=2.3", "scikit-learn>=1.4"]
 # R1's serving stack. Kept out of the base install so R3 and R4 — who need
 # neither a GPU nor model weights — are never blocked on a CUDA wheel.
 workers = ["vllm>=0.6", "transformers>=4.44"]
@@ -20,18 +26,34 @@ store = ["pyarrow>=16.0"]
 # `orch corpus build` needs it once to fetch HumanEval+/MBPP+; grading a
 # task never does.
 data = ["evalplus>=0.3.1"]
+# R3's learning stack, CPU-only. Kept optional for the same reason the others
+# are: reading a rollout store must not require installing an estimator. The
+# policy is choosing among a handful of arms with a few dozen features over
+# ~1,000 tasks, so a tabular model is the right tool until a measured gap says
+# otherwise — no RL framework, no fine-tuned policy LM, no vector DB.
+policy = ["scikit-learn>=1.4", "lightgbm>=4.0"]
 
 [project.scripts]
 orch = "orchestrator.cli:main"
 orch-workers = "orchestrator.workers.cli:main"
 orch-eval = "eval.cli:main"
+orch-policy = "orchestrator.policy.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+# `schemas` and `eval` live at the repo root rather than under `src/`, so they
+# need discovering separately or they are importable from a checkout and
+# missing from an install — which breaks every console script, since a role's
+# code imports the shared contract at module scope.
+#
+# The four roles ship as one distribution. That is not a weakening of the
+# separation between them: ownership is enforced by CODEOWNERS and by the
+# pre-commit scope check, neither of which cares how the wheel is built.
+where = ["src", "."]
+include = ["orchestrator*", "schemas*", "eval*"]
 
 [tool.pytest.ini_options]
 # Each role's tests live inside that role's commit scope, so a test change and

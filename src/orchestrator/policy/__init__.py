@@ -30,8 +30,30 @@ __all__ = [
     "SchemaVersionError",
     "LeakageError",
     "SplitError",
+    "StoreIntegrityError",
     "StoreReadError",
     "UngradedRunError",
+    # integrity
+    "IntegrityIssue",
+    "check_integrity",
+    # synthetic fixtures
+    "Fixture",
+    "write_fixture",
+    # features
+    "Feature",
+    "FeatureError",
+    "FeatureMatrix",
+    "FeatureSet",
+    "Standardizer",
+    "feature_set",
+    "fit_standardizer",
+    # the phase 0 gate
+    "GateResult",
+    "THRESHOLDS",
+    "auc",
+    "gate_report",
+    "measure_gate",
+    "measure_gates",
     # the row contract
     "SUPPORTED_SCHEMA_VERSIONS",
     "D0_OBSERVABLE",
@@ -67,9 +89,29 @@ from .errors import (
     PolicyError,
     SchemaVersionError,
     SplitError,
+    StoreIntegrityError,
     StoreReadError,
     UngradedRunError,
 )
+from .features import (
+    Feature,
+    FeatureError,
+    FeatureMatrix,
+    FeatureSet,
+    Standardizer,
+    feature_set,
+    fit_standardizer,
+)
+from .fixtures import Fixture, write_fixture
+from .gate import (
+    THRESHOLDS,
+    GateResult,
+    auc,
+    gate_report,
+    measure_gate,
+    measure_gates,
+)
+from .integrity import IntegrityIssue, check_integrity
 from .store import (
     Label,
     RolloutData,
