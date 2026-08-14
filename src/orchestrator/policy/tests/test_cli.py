@@ -220,14 +220,19 @@ def test_runs_on_an_empty_store_says_so(tmp_path, capsys):
     assert "no store" in capsys.readouterr().out
 
 
-def test_runs_marks_a_dirty_run_unpublishable_despite_its_manifest(fx, capsys):
+def test_runs_marks_a_dirty_run_unpublishable_despite_its_manifest(tmp_path, capsys):
     """The listing is where an operator looks before reporting from a run.
 
     A `-dirty` sweep keeps `publishable: true` in its manifest — the suffix is
     what overrides it, and `store.is_publishable` is the one place that rule
     lives. Reading the manifest key directly here would have shown the run as
     publishable in the only view an operator actually consults.
+
+    Builds its own run rather than using the module-scoped one: this test
+    renames the directory, and a module fixture is shared with every test that
+    comes after it.
     """
+    fx = fixtures.write_fixture(tmp_path, SynthConfig(n_tasks=40, seeds=2))
     dirty = f"{fx.run_id}-dirty"
     (fx.root / fx.run_id).rename(fx.root / dirty)
 
@@ -283,3 +288,69 @@ def test_fixture_can_write_the_two_layer_layout(tmp_path, capsys):
     run_id = out.split("run_id")[1].split()[0]
     assert (tmp_path / run_id / "_ROLLOUT_MANIFEST.json").exists()
     assert (tmp_path / run_id / "rollouts").is_dir()
+
+
+# -- train -------------------------------------------------------------------
+
+
+def train_argv(fx: fixtures.Fixture, *extra: str) -> list[str]:
+    return [
+        "train", "--root", str(fx.root), "--run", fx.run_id,
+        "--tasks", str(fx.tasks_path), "--cost", str(fx.cost_fingerprint),
+        *extra,
+    ]
+
+
+def test_train_reports_every_arm(fx, capsys):
+    main(train_argv(fx))
+    out = capsys.readouterr().out
+    assert "arms: large, small" in out
+    for arm in ("large", "small"):
+        assert f"arm '{arm}'" in out
+
+
+def test_train_names_which_calibration_map_shipped(fx, capsys):
+    """`applied=False` is a decision, not an absence, and has to be visible."""
+    main(train_argv(fx))
+    out = capsys.readouterr().out
+    assert "using isotonic" in out or "using identity" in out
+
+
+def test_train_writes_the_artifact_set(fx, tmp_path):
+    from orchestrator.policy import heads
+
+    out = tmp_path / "policy"
+    assert main(train_argv(fx, "--out", str(out))) in (EXIT_OK, EXIT_GATE_FAILED)
+    for name in (heads.POLICY_PICKLE, heads.HEADS_MANIFEST,
+                 heads.CALIBRATION_FILE, heads.FEATURE_SPEC_FILE):
+        assert (out / name).exists(), name
+
+
+def test_a_miscalibrated_policy_does_not_exit_zero(fx, monkeypatch, capsys):
+    """Same contract as the gate: shipping an uncalibrated `P_pass` quietly is
+    worse than failing loudly, because λ silently stops meaning anything."""
+    from orchestrator.policy import calibration
+
+    monkeypatch.setattr(calibration, "ECE_TARGET", 0.0)
+    assert main(train_argv(fx)) == EXIT_GATE_FAILED
+
+
+def test_train_can_target_d0(fx, capsys):
+    main(train_argv(fx, "--decision-point", "D0"))
+    assert "policy for D0" in capsys.readouterr().out
+
+
+def test_train_refuses_an_unknown_run(fx, capsys):
+    argv = ["train", "--root", str(fx.root), "--run", "2026-01-01-abcdefg-000000"]
+    assert main(argv) == EXIT_ERROR
+    assert "error:" in capsys.readouterr().err
+
+
+def test_there_is_no_train_flag_that_opens_the_test_split():
+    """The absence is the enforcement, as everywhere else in this package."""
+    from orchestrator.policy.cli import build_parser
+
+    text = build_parser().format_help()
+    train = [a for a in build_parser()._subparsers._group_actions[0].choices]
+    assert "train" in train
+    assert "--test" not in text and "test-split" not in text
