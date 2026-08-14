@@ -281,6 +281,23 @@ class Calibrator:
     def load(path: Path | str) -> "Calibrator":
         return Calibrator.from_dict(json.loads(Path(path).read_text()))
 
+    @property
+    def is_identity(self) -> bool:
+        return self.knots_x == (0.0, 1.0) and self.knots_y == (0.0, 1.0)
+
+    @staticmethod
+    def identity(*, arm: str = "", n_rows: int = 0,
+                 fitted_on: Sequence[str] = ("val",)) -> "Calibrator":
+        """The map that changes nothing, shipped when isotonic makes it worse.
+
+        Not a placeholder: it is a real choice between two candidate maps, and
+        writing it out means the scoring path is identical either way. A policy
+        that sometimes has a calibrator and sometimes has `None` grows two code
+        paths, and the one that runs less often is the one that breaks.
+        """
+        return Calibrator(knots_x=(0.0, 1.0), knots_y=(0.0, 1.0),
+                          fitted_on=tuple(fitted_on), n_rows=n_rows, arm=arm)
+
 
 def fit_calibrator(probabilities: Sequence[float] | np.ndarray,
                    labels: Sequence[int] | np.ndarray, *,
@@ -389,11 +406,20 @@ class CalibrationReport:
     brier_after: float
     base_rate: float
     bins: tuple[ReliabilityBin, ...]
+    #: Whether the isotonic map was kept. False means it was measured, found to
+    #: be worse than doing nothing, and replaced by the identity — see
+    #: `calibrate`.
+    applied: bool = True
+
+    @property
+    def ece_applied(self) -> float:
+        """ECE of the map that actually ships."""
+        return self.ece_cross_fitted if self.applied else self.ece_before
 
     @property
     def meets_target(self) -> bool:
-        """Judged on the cross-fitted number, which is the defensible one."""
-        return self.ece_cross_fitted < ECE_TARGET
+        """Judged on the shipped map's cross-fitted number."""
+        return self.ece_applied < ECE_TARGET
 
     @property
     def optimism(self) -> float:
@@ -407,9 +433,10 @@ class CalibrationReport:
 
     def summary(self) -> str:
         verdict = "MEETS" if self.meets_target else "MISSES"
+        chosen = "isotonic" if self.applied else "identity (isotonic was worse)"
         return "\n".join([
-            f"[{verdict}] arm {self.arm!r}: ECE {self.ece_cross_fitted:.4f} "
-            f"(cross-fitted) vs target {ECE_TARGET:.2f}",
+            f"[{verdict}] arm {self.arm!r}: ECE {self.ece_applied:.4f} "
+            f"vs target {ECE_TARGET:.2f}, using {chosen}",
             f"    uncalibrated {self.ece_before:.4f} -> in-sample "
             f"{self.ece_after:.4f} -> cross-fitted "
             f"{self.ece_cross_fitted:.4f}",
@@ -433,6 +460,8 @@ class CalibrationReport:
             "base_rate": self.base_rate,
             "meets_target": self.meets_target,
             "optimism": self.optimism,
+            "applied": self.applied,
+            "ece_applied": self.ece_applied,
             "ece_target": ECE_TARGET,
             "bins": [b.as_dict() for b in self.bins],
         }
@@ -444,28 +473,55 @@ def calibrate(probabilities: Sequence[float] | np.ndarray,
               arm: str = "",
               n_folds: int = 5,
               n_bins: int = DEFAULT_BINS,
-              seed: int = 0) -> tuple[Calibrator, CalibrationReport]:
-    """Fit the shipped calibrator and measure it honestly, in one call.
+              seed: int = 0,
+              always_apply: bool = False) -> tuple[Calibrator, CalibrationReport]:
+    """Fit the shipped calibrator, measure it honestly, and keep it only if it
+    helps.
 
-    The returned calibrator is fitted on every row given. The report's headline
-    number is the cross-fitted one, so the artifact uses all the data and the
-    claim about it does not.
+    The returned calibrator is fitted on every row given, so the artifact uses
+    all the data while the claim about it does not.
+
+    ## Why isotonic can be declined
+
+    Isotonic is nonparametric and needs data. On a few hundred validation rows
+    it fits the noise in the reliability curve, and the cross-fitted ECE comes
+    out *worse* than leaving the classifier's own probabilities alone —
+    logistic regression fitted by maximum likelihood is already close to
+    calibrated, so there is often little to correct and plenty to break.
+
+    So both candidates are measured out of fold and the better one ships. This
+    is model selection on validation, which is what validation is for, and it
+    is recorded in the report rather than done quietly: `applied=False` means
+    isotonic was fitted, measured, and rejected.
+
+    The one thing it costs: the reported ECE is now a selected minimum of two
+    numbers, so it is very slightly optimistic. Both are always reported, so a
+    reader can take `ece_before` if they would rather not have the choice made
+    for them.
     """
     p, y = _checked(probabilities, labels)
     calibrator = fit_calibrator(p, y, arm=arm)
     in_sample = calibrator(p)
     cross = cross_fitted_probabilities(p, y, groups, n_folds=n_folds, seed=seed)
 
-    return calibrator, CalibrationReport(
+    ece_before = expected_calibration_error(p, y, n_bins)
+    ece_cross = expected_calibration_error(cross, y, n_bins)
+    applied = bool(always_apply or ece_cross < ece_before)
+
+    report = CalibrationReport(
         arm=arm,
         n_rows=int(p.size),
         n_tasks=len(set(str(g) for g in groups)),
-        ece_before=expected_calibration_error(p, y, n_bins),
+        ece_before=ece_before,
         ece_after=expected_calibration_error(in_sample, y, n_bins),
-        ece_cross_fitted=expected_calibration_error(cross, y, n_bins),
+        ece_cross_fitted=ece_cross,
         mce_cross_fitted=maximum_calibration_error(cross, y, n_bins),
         brier_before=brier_score(p, y),
         brier_after=brier_score(cross, y),
         base_rate=float(y.mean()),
-        bins=reliability_table(cross, y, n_bins),
+        bins=reliability_table(cross if applied else p, y, n_bins),
+        applied=applied,
     )
+    if not applied:
+        calibrator = Calibrator.identity(arm=arm, n_rows=int(p.size))
+    return calibrator, report
