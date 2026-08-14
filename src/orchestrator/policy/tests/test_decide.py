@@ -250,3 +250,65 @@ def test_the_degenerate_ends_reproduce_r4s_constant_baselines(sweep, fx):
         theirs = always(arm)(r4).summary()
         assert mine["accuracy"] == pytest.approx(theirs["accuracy"])
         assert mine["cost"] == pytest.approx(theirs["cost"])
+
+
+# -- the charged probe -------------------------------------------------------
+
+
+def test_a_probe_costs_k_cheap_samples(policy, loaded):
+    """`PROBE_FEATURES` read k cheap draws, so using them obliges paying for
+    them. A feature that assumes three free generations makes the policy look
+    cheaper than any system that could actually run it."""
+    scored = decide.score_tasks(policy, loaded, _coefficients(), split="val")
+    surcharge = decide.probe_surcharge(policy, scored, cheap="small", k=3)
+
+    task = next(iter(scored))
+    cheap = next(s for s in scored[task] if s.arm == "small")
+    assert surcharge[task] == pytest.approx(3 * cheap.e_cost)
+
+
+def test_the_probe_charge_does_not_move_the_argmax(policy, loaded):
+    """It is paid before the routing decision and whatever it says the money is
+    gone, so it is a constant across arms — it shifts the policy rightward on
+    the frontier rather than changing which arm wins at a fixed λ. The probe
+    has to earn its cost through better decisions, not through free
+    information."""
+    scored = decide.score_tasks(policy, loaded, _coefficients(), split="val")
+    surcharge = decide.probe_surcharge(policy, scored, cheap="small", k=3)
+
+    for task, scores in scored.items():
+        charged = tuple(
+            decide.ArmScore(s.arm, s.p_pass, s.e_cost + surcharge[task],
+                            s.e_latency)
+            for s in scores
+        )
+        for lam in (0.001, 0.05, 10.0):
+            assert (decide.choose(scores, lam).arm
+                    == decide.choose(charged, lam).arm)
+
+
+def test_a_policy_without_probe_features_is_charged_nothing(sweep):
+    assert sweep.paid_arms == ()
+    assert sweep.probe_cost_per_task == 0.0
+    assert all(r["probe_cost"] == 0.0 for r in sweep.records)
+
+
+def test_pricing_a_probe_needs_the_cheap_arm(policy, loaded):
+    scored = decide.score_tasks(policy, loaded, _coefficients(), split="val")
+    with pytest.raises(DecisionError, match="no 'probe_only' arm"):
+        decide.probe_surcharge(policy, scored, cheap="probe_only")
+
+
+def test_probe_features_cannot_be_attached_at_d0():
+    """The gap this phase surfaced rather than closed.
+
+    A self-consistency probe is bought *before* routing, so economically it
+    belongs to a D0 decision — but its features read the outcomes of
+    generations that have already happened, which are D1 columns. The contract
+    has two decision points and this is a third surface. Recorded as a test so
+    it is not rediscovered.
+    """
+    from orchestrator.policy.features import FeatureError, feature_set
+
+    with pytest.raises(FeatureError, match="the probe features are D1"):
+        feature_set("D0", with_probe=True)
