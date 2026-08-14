@@ -22,7 +22,7 @@ anyone commits four weeks to it.
 | ✅ | `schemas/` frozen: `Task` and `Rollout` JSON schemas | R4 |
 | ✅ | Synthetic rollout generator emitting schema-valid rows with a planted, known-strength signal | R4 |
 | ❌ | Sign-off from all four roles on the frozen schema — landed unilaterally, past the day-3 deadline | all |
-| ⏳ | 200-task pilot sweep (small ×3 seeds, large ×3 seeds), fully graded — corpus ✅, sweep ✅ (`2026-08-13-c76a55d-4f4767`, 1200 rows, 0 failed). Grading ❌ is R2's | R1 · R2 |
+| ✅ | 200-task pilot sweep (small ×3 seeds, large ×3 seeds), fully graded — `2026-08-13-c76a55d-4f4767`, 1200 rows generated and graded in Docker, 826 solved, `A_large − A_small = 19.33pp` against an ≥8pp gate | R1 · R2 |
 | ❌ | Oracle-gap study — `eval.oracle_headroom()` is implemented, but there is no pilot to run it on | R4 |
 | ❌ | Power calculation off measured discordance rates — `eval.mcnemar_sample_size()` exists; the discordance rate does not | R4 |
 
@@ -30,7 +30,7 @@ anyone commits four weeks to it.
 
 | Measured | Quantity | Definition | Threshold | If it fails |
 |---|---|---|---|---|
-| ❌ | `A_large − A_small` | pass@1 difference between arms | ≥ 8 pp | Arms aren't differentiated — shrink the small model |
+| ✅ | `A_large − A_small` | pass@1 difference between arms | ≥ 8 pp | **Measured 19.33 pp** (59.17% vs 78.50%, n=600 each). Arms are differentiated; no need to shrink the small model |
 | ❌ | `A_oracle − A_large` | headroom above the best single arm | ≥ 5 pp | Large model dominates; only cost savings available, not accuracy |
 | ❌ | `AUC_D0` | predicting "small solves" from **prompt-only** features | ≥ 0.65 | Pre-generation routing is dead. Move to D1 — expected, not fatal |
 | ❌ | `AUC_D1` | same, from **post-generation** features | ≥ 0.75 | **Hard stop.** Neither decision point has signal; the premise is false |
@@ -38,9 +38,11 @@ anyone commits four weeks to it.
 Expect `AUC_D0 ≈ 0.60–0.68` and `AUC_D1 ≈ 0.80–0.90`. That asymmetry is the most
 important number in the project and it should drive the architecture.
 
-**Phase 0 has not passed.** No gate quantity has a value, so nothing below is
-formally unblocked — Phase 1 work that has landed did so against fixtures, which
-is the design, not an exception to the gate.
+**Phase 0 has not passed.** One of four gate quantities now has a value —
+`A_large − A_small` = 19.33 pp, clearing its 8 pp threshold on the graded pilot.
+The other three do not: the oracle gap needs R4's headroom study, and both AUC
+figures need R3's feature builders and value heads. `AUC_D1` is the hard stop,
+and it remains unmeasured, so nothing below is formally unblocked.
 
 ---
 
@@ -55,7 +57,7 @@ The minimum system that produces a defensible result. Nothing outside this list 
 | ✅ | Qwen2.5-Coder-1.5B and 7B, **TP=1 both**, bf16 — both backends driven against real vLLM 0.11.0. One card on this machine, so the arms ran sequentially rather than one per GPU | R1 |
 | ✅ | Characterization pass producing cost coefficients, `warm_latency_s`, `cold_start_s` — `bench/cost_coefficients.json` committed; `cold_start_s` 28.20s small / 55.36s large | R1 |
 | ❌ | 1,000 tasks from MBPP+ / HumanEval+, split 60/20/20, manifest hashed and committed — the 200-task pilot corpus ✅ exists and is hashed; the full 1,000 and the `data/splits/` manifest ❌ do not | R2 · R4 |
-| ⏳ | Frozen-ladder sweep: 6 generations per task, all logged — R1's half is ✅ (`2026-08-13-c76a55d-4f4767`, 1200 rows = 200 × 2 arms × 3 seeds, sealed). "All graded" is R2's half and is ❌ | R1 · R2 |
+| ✅ | Frozen-ladder sweep: 6 generations per task, all graded, all logged — 1200 rows = 200 × 2 arms × 3 seeds, sealed, graded, and written to Parquet alongside JSONL | R1 · R2 |
 | ❌ | Calibrated `P(pass \| x, arm)` at D0 and D1, plus cost and latency regressors — `src/orchestrator/policy/` ✅ exists with a row contract and a label-stripping reader; the feature builders and value heads ❌ are not written | R3 |
 | ❌ | λ-sweep producing the cost–accuracy frontier — the evaluator side (`eval.sweep`, `eval.pareto_front`) is ✅; the policy that feeds it is ❌ | R3 |
 | ✅ | Seven baselines: `always_small`, `always_large`, `random_route(p)`, **`heuristic_route`**, `best_of_n_small`, `verifier_gated_cascade`, `oracle_router` — all implemented against fixtures | R4 |
@@ -131,9 +133,11 @@ how routing research is normally done, and saying it first is better than being 
 - **R2's task manifest blocked R1's sweep** and nothing else. It was the only
   true cross-role dependency in Phase 1, it **cleared on 13 Aug**, and the sweep
   ran the same day: `2026-08-13-c76a55d-4f4767`, 1200 rows, sealed. The
-  dependency now points the other way — **R2's grading is what the pilot waits
-  on**, and the rollouts it needs already exist with `code` extracted on every
-  row. No remaining blocker in the project is a handoff or a GPU.
+  dependency is fully discharged in both directions: R2 graded the pilot the
+  same night, so the **pilot now runs end to end** — generated, graded, costed,
+  and schema-validated. That is the pipeline closing, **not the Phase 0 gate
+  passing**: one of its four quantities is measured and three are not. No
+  remaining blocker is a handoff or a GPU; the rest is R3's and R4's code.
 - **R3 and R4 never block on GPUs.** They develop against the synthetic rollout
   generator, which doubles as a correctness test for the policy and stats code —
   the right answer is known by construction.

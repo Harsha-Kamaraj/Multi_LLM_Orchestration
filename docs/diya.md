@@ -119,18 +119,53 @@ frozen. Hand over the corpus; don't hold the split.
 
 ## Week 1 (Phase 0) — status at 13 Aug 2026
 
-R2 landed the corpus and a full grader rewrite on 13 Aug. The Phase 1 blocker is
-cleared: `data/tasks/pilot_200.jsonl` exists, so R1 is no longer waiting on
-anything but a GPU.
+R2 landed the corpus and a full grader rewrite on 13 Aug, and **graded R1's
+pilot in containers the same night**. Every row below is now an executed result
+rather than a tested code path.
+
+The graded run:
+
+| | |
+|---|---|
+| `run_id` | `2026-08-13-c76a55d-4f4767` — R1's sealed sweep, graded in place under a separate `rollouts/` store |
+| Rows | 1200 graded, 0 skipped for a missing task entry |
+| Solved | **826 / 1200** |
+| Sandbox | Docker, every documented flag, **1200 containers** |
+| Wall-clock | 3 m 20 s at 16 workers |
+| Schema | **1200/1200 rows validate** against `schemas/rollout.schema.json` |
+
+**Phase 0's gate clears on measured data:**
+
+| Arm | n | solved | accuracy |
+|---|---|---|---|
+| `direct_small` (1.5B) | 600 | 355 | **59.17%** |
+| `direct_large` (7B) | 600 | 471 | **78.50%** |
+
+`A_large − A_small` = **19.33 pp**, against a `≥ 8pp` gate — and against guru.md's
+standing prediction of "~20pp from 1.5B vs 7B". The gap holds on both datasets
+independently (humaneval+ `+17.7pp`, mbpp+ `+21.0pp`), which is what makes it a
+model-scale effect rather than one dataset carrying it.
+
+Error classes across 1200: `none` 1185, `runtime_error` 6, `syntax_error` 3,
+`timeout` 3, `harness_error` 3.
+
+### The hack detector fired on real output
+
+**3 rows flagged `sys_exit_or_skip`** — 0.25%, all `direct_large` on `Mbpp/264`.
+Until tonight the detector had only ever been validated against fixtures I wrote
+myself, which is the weaker half of the claim: a detector that catches only the
+attacks its author imagined has been validated against its author. This is the
+first time it has caught a real model doing it unprompted. R4 reports the rate;
+a rising one is a finding, not noise.
 
 | | Item | Where it stands |
 |---|---|---|
 | ✅ | Task manifest for the 200-task pilot — **this was R1's blocker** | `data/tasks/pilot_200.jsonl` + `MANIFEST.json` — 200 tasks, 100 per dataset, `content_hash 0376d0df9783abc4`. Built by `corpus_build.py`, which is itself tested. |
 | ✅ | A deliberately malicious solution suite, and a hack detector that catches it | `hacks.py` flags six behaviours — `hardcoded_visible_case`, `bare_except_pass`, `sys_exit_or_skip`, `reads_test_file`, `test_file_modified`, `test_file_deleted` — validated against nine adversarial fixtures that include two honest controls, so the detector is checked for false positives as well as misses |
 | ✅ | Per-test pass counts, visible and hidden kept apart | See below — the contract is now enforced in code |
-| ⚠️ | Docker grader working end to end | The `docker` backend and its `Dockerfile` are written with every documented flag, and the grader is covered by 48 tests. Those tests exercise the *subprocess* path; **no generation has been graded in a container**, so the sandbox boundary itself is still unexercised. |
-| ❌ | Grade R1's pilot sweep | R1 has not swept — needs GPU access, not R2 |
-| ❌ | Sign off on `schemas/` by day 3 | Missed. R2's emitted fields do now conform to the rollout schema, so the artifact agrees even though the process step did not happen. |
+| ✅ | Docker grader working end to end | **1200 generations graded in containers**, image `orch-grader:py312`, every documented flag applied. The sandbox boundary is now exercised rather than merely written: the 48 tests still cover the subprocess path, but the reported numbers came from Docker, as this doc requires. |
+| ✅ | Grade R1's pilot sweep | `2026-08-13-c76a55d-4f4767`, 1200 rows, 826 solved, `A_large − A_small = 19.33pp`. One command: `orch grade run --backend docker`. |
+| ✅ | Sign off on `schemas/` by day 3 | **Green on the artifact, and the process clause still failed.** All 1200 graded rows validate against `schemas/rollout.schema.json`, and `schemas/tests/test_conformance.py` pins the graded fields — `visible_passed`, `hidden_passed`, `error_class`, `hack_flags`, `grade_duration_s`. What cannot be made true retroactively is the *timing*: this landed well past day 3 and without a four-role sign-off. Recorded rather than quietly dropped. |
 
 ### The interface drift is closed
 
@@ -156,6 +191,19 @@ solution suite is caught by the hack detector.
 
 Write the malicious suite yourself, first. A detector validated only against honest
 code has been validated against nothing.
+
+**All three clauses hold, and all three are now executed rather than argued:**
+
+| Clause | Evidence |
+|---|---|
+| Pure function | Same `(task, code)` → same `Grade`. Rows are graded concurrently and the store is still written in manifest order, so a re-grade is byte-identical whatever order 1200 containers finish in. |
+| Container-isolated | 1200 rows graded through Docker with `--network none`, `--read-only`, `--memory 512m`, `--pids-limit 128`, `--cpus 1`. No reported number came from the subprocess backend — `grade run` refuses it without an explicit unsafe override. |
+| Malicious suite caught | Nine adversarial fixtures including two honest controls, plus **3 real `sys_exit_or_skip` detections** in the pilot. |
+
+The concurrency is worth one line of justification, because "pure function" is
+what licenses it. Rows never shared state: each grade already got its own
+`mkdtemp` workdir and its own container. Parallelism changes wall-clock —
+25 minutes to 3 m 20 s — and nothing else.
 
 ---
 
