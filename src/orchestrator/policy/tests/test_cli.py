@@ -463,3 +463,50 @@ def test_the_fixture_command_can_write_a_ladder(tmp_path, capsys):
     rows = (tmp_path / run_id / "generations").glob("part-*.jsonl")
     text = next(rows).read_text()
     assert '"ladder_step": 1' in text
+
+
+# -- ablate ------------------------------------------------------------------
+
+
+def test_ablate_reports_a_corrected_family(fx, capsys):
+    argv = ["ablate", "--root", str(fx.root), "--run", fx.run_id,
+            "--tasks", str(fx.tasks_path), "--resamples", "150"]
+    assert main(argv) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "simultaneous at" in out
+    assert "without visible_outcome" in out
+
+
+def test_ablate_always_exits_zero(fx, capsys):
+    """A measurement, not a gate. "No group is detectable" is a real answer and
+    wiring it to a non-zero exit would turn a finding into a build failure."""
+    argv = ["ablate", "--root", str(fx.root), "--run", fx.run_id,
+            "--tasks", str(fx.tasks_path), "--decision-point", "D0",
+            "--resamples", "150"]
+    assert main(argv) == EXIT_OK
+
+
+def test_ablate_writes_its_table(fx, tmp_path):
+    out = tmp_path / "ablations.json"
+    argv = ["ablate", "--root", str(fx.root), "--run", fx.run_id,
+            "--tasks", str(fx.tasks_path), "--resamples", "150",
+            "--no-only", "--out", str(out)]
+    assert main(argv) == EXIT_OK
+    payload = json.loads(out.read_text())
+    assert payload["carries_the_gap"] == "visible_outcome"
+    assert all(d["kind"] == "leave_one_out" for d in payload["deltas"])
+
+
+def test_ablate_needs_an_arm_when_a_ladder_makes_the_name_ambiguous(
+    laddered, capsys,
+):
+    """`small` and `repair_small` both match the name heuristic, so the cheap
+    arm cannot be inferred. Refusing beats guessing — a wrong cheap arm inverts
+    every number in the table."""
+    argv = ["ablate", "--root", str(laddered.root), "--run", laddered.run_id,
+            "--tasks", str(laddered.tasks_path), "--resamples", "80"]
+    assert main(argv) == EXIT_ERROR
+    assert "cannot tell which" in capsys.readouterr().err
+
+    argv += ["--arm", "small"]
+    assert main(argv) == EXIT_OK
