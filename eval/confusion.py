@@ -141,15 +141,22 @@ def confusion(
             f"tasks alongside the raw number or the comparison looks flatter "
             f"than it is."
         )
-    if result.escalation_rate > 0.95:
-        warnings.append(
-            "escalates on >95% of tasks — effectively always_large, and its "
-            "accuracy should be read as such rather than as routing."
-        )
-    if result.escalation_rate < 0.05:
-        warnings.append(
-            "escalates on <5% of tasks — effectively always_small."
-        )
+
+    # A policy with one distinct action is a *fixed* policy, not a degenerate
+    # router. Warning that `always_small` behaves like `always_small` is noise,
+    # and noise in a warning channel trains people to ignore the channel — which
+    # costs the one time it fires on something real.
+    is_router = len({a for row in actions for a in row}) > 1
+    if is_router:
+        if result.escalation_rate > 0.95:
+            warnings.append(
+                "escalates on >95% of tasks — effectively always_large, and its "
+                "accuracy should be read as such rather than as routing."
+            )
+        if result.escalation_rate < 0.05:
+            warnings.append(
+                "escalates on <5% of tasks — effectively always_small."
+            )
     return Confusion(
         counts=counts, n=n, escalation_rate=result.escalation_rate,
         warnings=warnings,
