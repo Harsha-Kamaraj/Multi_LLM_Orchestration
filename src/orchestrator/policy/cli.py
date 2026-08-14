@@ -8,6 +8,7 @@ both absences are the enforcement rather than a check.
     orch-policy train   --run <run_id> --tasks data/tasks/pilot.jsonl --out policy/
     orch-policy decide  --run <run_id> --policy policy/ --out decisions/
     orch-policy repair  --run <run_id>
+    orch-policy ablate  --run <run_id> --tasks data/tasks/pilot.jsonl
     orch-policy fixture --out runs --tasks 400
     orch-policy runs
 
@@ -227,6 +228,43 @@ def _cmd_repair(args: argparse.Namespace) -> int:
     return EXIT_OK if result.verdict == "PASS" else EXIT_GATE_FAILED
 
 
+def _cmd_ablate(args: argparse.Namespace) -> int:
+    """Which feature groups carry the signal. Phase 8.
+
+    Always exits zero. An ablation is a measurement, not a gate — "no group's
+    removal is detectable" is a real and common answer, and wiring it to a
+    non-zero exit would turn a finding into a build failure.
+    """
+    from . import ablations
+
+    data = store.load_rollouts(
+        args.root, args.run,
+        tasks_path=args.tasks,
+        cost_fingerprint=args.cost,
+        layer=args.layer,
+    )
+    table = ablations.run_ablations(
+        data, args.decision_point,
+        arm=args.arm,
+        groups=args.groups or None,
+        include_only=not args.no_only,
+        n_resamples=args.resamples,
+        level=args.level,
+        seed=args.seed,
+    )
+    print(table.summary())
+
+    if args.out:
+        path = Path(args.out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(table.as_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8", newline="",
+        )
+        print(f"\nwrote {path}")
+    return EXIT_OK
+
+
 def _cmd_fixture(args: argparse.Namespace) -> int:
     from schemas.synth import SynthConfig
 
@@ -354,6 +392,34 @@ def build_parser() -> argparse.ArgumentParser:
     repair_cmd.add_argument("--out", type=Path, default=None,
                             help="write the verdict as JSON")
     repair_cmd.set_defaults(func=_cmd_repair)
+
+    ablate_cmd = sub.add_parser(
+        "ablate",
+        help="measure which feature groups carry the signal",
+        description="Phase 8. Paired, simultaneous intervals over a family of "
+                    "leave-one-out and only-this-group variants.",
+    )
+    _add_run_arguments(ablate_cmd)
+    ablate_cmd.add_argument("--decision-point", choices=("D0", "D1"),
+                            default="D1")
+    ablate_cmd.add_argument("--arm", default=None,
+                            help="which arm to ablate. Inferred from measured "
+                                 "cost when a costing is pinned; required when "
+                                 "a ladder makes the name heuristic ambiguous")
+    ablate_cmd.add_argument("--groups", nargs="*", default=None,
+                            help="restrict to these groups (default: all "
+                                 "present in the feature set)")
+    ablate_cmd.add_argument("--no-only", action="store_true",
+                            help="leave-one-out only, skipping the "
+                                 "only-this-group mirror")
+    ablate_cmd.add_argument("--resamples", type=int, default=1000)
+    ablate_cmd.add_argument("--level", type=float, default=0.95,
+                            help="per-family level, before the Bonferroni "
+                                 "split across comparisons")
+    ablate_cmd.add_argument("--seed", type=int, default=0)
+    ablate_cmd.add_argument("--out", type=Path, default=None,
+                            help="write the table as JSON")
+    ablate_cmd.set_defaults(func=_cmd_ablate)
 
     fixture_cmd = sub.add_parser(
         "fixture", help="write a synthetic run with a planted signal")
