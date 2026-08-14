@@ -151,27 +151,58 @@ Output:  policy.pkl + decisions.parquet, one per (policy, λ)
 
 ---
 
-## Week 1 (Phase 0) — status at 13 Aug 2026
+## Status — 14 Aug 2026
 
-`src/orchestrator/policy/` landed on 13 Aug — the foundation, not yet the models.
-64 tests green.
+Phases 2–4 merged as `10a512f`, Phase 5 as `3bbb569`. 923 tests green, no GPU
+and no network. Everything below is measured on synthetic fixtures: **no number
+here has touched the real pilot yet**, and that gap is the top item in the
+table.
 
 | | Item | Where it stands |
 |---|---|---|
 | ✅ | Synthetic rollout generator with planted signal + adversarial fixtures | Delivered by R4 as `schemas/synth.py` and `schemas/adversarial.py`, so nothing blocked the start |
 | ✅ | A reader that cannot leak | `store.py` returns rows with the hidden-test columns **physically removed** and hands labels back separately, keyed by `rollout_id`. A feature builder is never given the object holding them. The test split has no load flag at all. Every read pins an explicit `run_id`. |
 | ✅ | The row contract | `contract.py` — `observable_at(decision_point)` names which columns exist at D0 versus D1, plus `normalize_row`, `is_graded`, `solved`, and `assert_no_labels(columns, context=…)` |
-| ❌ | D0 and D1 feature builders, each feature declaring its decision point | Not written. `observable_at()` is the mechanism they must be built against. |
-| ❌ | Three value heads — `P_pass`, `E_cost`, `E_latency` | Not written |
-| ❌ | Calibration to ECE < 0.05, and the λ-sweep | Not written |
-| ❌ | Recover the planted signal end to end | Not written. The planted signal sits at `AUC_D0 ≈ 0.62–0.69` per `synth.py`, so the target is known and unclaimed. |
-| ❌ | Measure `AUC_D0` and `AUC_D1` on the pilot | R2's 200-task manifest now exists, but nothing has been swept or graded |
-| ❌ | Sign off on `schemas/` by day 3 | Missed — the contract R3 consumes was frozen without this seat's review |
+| ✅ | D0 and D1 feature builders, each feature declaring its decision point | `features/` — 13 at D0, 34 at D1, D0 a verified subset of D1. Declared columns are checked against `observable_at()` at construction, *and* each feature is handed a `RowView` that raises on any undeclared read. The second layer is what makes the first trustworthy. |
+| ✅ | Three value heads — `P_pass`, `E_cost`, `E_latency` | `heads.py`, fitted per arm. `E_cost` predicts **prefill and decode tokens**; conversion to GPU-seconds, latency and USD happens at scoring time through R1's pinned `CostCoefficients`, so a change of instance price is not a retrain. |
+| ✅ | Calibration to ECE < 0.05 | `calibration.py`. Isotonic on `val`, ECE measured by cross-fitting with folds **grouped by task**. See the note below: at pilot scale isotonic is often measurably worse than doing nothing, and the code records that decision rather than hiding it. |
+| ❌ | The λ-sweep and `decisions.parquet` | Phase 6, not written. **This is what R4 is blocked on.** |
+| ✅ | Recover the planted signal end to end | On a 500-task fixture: `AUC_D0 = 0.6464 [0.5485, 0.7384]`, `AUC_D1 = 0.8584 [0.8009, 0.9086]`, gap `+0.2120`. Both land inside ROADMAP's predicted bands, and nothing is tuned. |
+| ❌ | Measure `AUC_D0` and `AUC_D1` on the pilot | **The last two unmeasured quantities in the Phase 0 gate, and both are R3's.** R1 swept `2026-08-13-c76a55d-4f4767` and R2 graded all 1200 rows on 13 Aug, so the data exists — but `runs/` is gitignored, so the graded store is not in the repo and R3 has never read it. `orch-policy gate` runs the moment that directory is available. |
+| ❌ | Sign off on `schemas/` by day 3 | Missed, and not recoverable — the contract R3 consumes was frozen without this seat's review. Three consequences are open with R4 and R2: the rollout row carries no prompt, R1's Parquet `extra` does not satisfy `rollout.schema.json`, and the `generations/` vs `rollouts/` layer split is not in the schema. |
 
 The three leakage guarantees this package claims are enforced in code rather
 than in review, which is the right shape: R4's independent audit
 (`eval/leakage.py`) should find nothing, and if it does, that is the design
 working.
+
+### Calibration did not do what this document assumed it would
+
+Worth recording, because the definition of done says "isotonic" and the honest
+answer at this data size is "isotonic, measured, and usually declined".
+
+Isotonic is nonparametric and needs data. On a few hundred validation rows it
+fits the noise in the reliability curve, and cross-fitted ECE comes out *worse*
+than leaving the classifier's own probabilities alone — logistic regression
+fitted by maximum likelihood is already close to calibrated, so there is little
+to correct and plenty to break. Sweeping fixture size puts the crossover at
+roughly 1,800 validation rows:
+
+| val rows | uncalibrated ECE | cross-fitted ECE | isotonic kept |
+|---|---|---|---|
+| 180 | 0.0499 | 0.1103 | no |
+| 720 | 0.0276 | 0.0376 | no |
+| 1,800 | 0.0319 | **0.0120** | yes |
+
+So both candidates are measured out of fold and the better one ships, recorded
+as `applied` in `heads.json`. **The pilot has roughly 120 validation rows per
+arm, so expect the identity map to win on real data.** That is a finding about
+how much validation data a calibrated policy needs, not a licence to skip
+calibration — the measurement is what licenses the choice.
+
+Reporting ECE in-sample would have hidden all of this: isotonic drives the
+in-sample number to 0.0000 on any data at all, and a test pins that value
+precisely so the cross-fitting cannot quietly stop happening.
 
 ---
 
@@ -179,6 +210,12 @@ working.
 
 The policy recovers the planted signal in synthetic rollouts, and `P(pass)` is
 calibrated to **ECE < 0.05**.
+
+**Met on synthetic data as of 14 Aug**, both clauses: the gate recovers the
+planted signal inside its predicted band, and every arm clears the ECE target
+at D1. It is not met on the pilot, because R3 has not yet been given the graded
+store — and a definition of done evaluated only against fixtures is a statement
+about the code, not about the claim this project exists to test.
 
 ---
 
