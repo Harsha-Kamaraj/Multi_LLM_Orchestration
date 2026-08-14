@@ -79,6 +79,10 @@ LAMBDA_GRID: tuple[float, ...] = tuple(
 DECISIONS_PARQUET = "decisions.parquet"
 DECISIONS_JSONL = "decisions.jsonl"
 
+#: ROADMAP's self-consistency probe: k cheap samples bought to learn how hard a
+#: task is before committing to an arm.
+PROBE_SAMPLES = 3
+
 
 class DecisionError(PolicyError):
     """A decision cannot be made or written as asked."""
@@ -206,6 +210,26 @@ class Sweep:
     #: is added, and so every number behind a decision is auditable rather than
     #: only the one that won.
     records: tuple[dict[str, Any], ...]
+    #: Arms the feature set obliges the policy to pay for before deciding.
+    #: Empty when no probe features are in use.
+    paid_arms: tuple[str, ...] = ()
+    probe_samples: int = 0
+
+    @property
+    def probe_cost_per_task(self) -> float:
+        """Mean probe surcharge. Zero when no probe features are in use.
+
+        Reported separately because R4's `from_decisions` charges the *logged*
+        cost of the chosen arm and knows nothing about a probe. Until there is
+        an entry point that accepts a per-task surcharge, this number has to be
+        added on their side or a probing policy is compared at a cost it never
+        actually paid.
+        """
+        if not self.paid_arms:
+            return 0.0
+        first = self.lambdas[0]
+        probes = [r["probe_cost"] for r in self.records if r["lam"] == first]
+        return float(np.mean(probes)) if probes else 0.0
 
     def actions(self, lam: float) -> dict[str, str]:
         """`{task_id: arm}` for one λ — exactly R4's `from_decisions` input."""
@@ -274,6 +298,13 @@ class Sweep:
             + ("" if self.publishable else "  [not publishable]"),
             f"  {len(self.tasks)} tasks x {len(self.lambdas)} lambdas",
         ]
+        if self.paid_arms:
+            lines.append(
+                f"  probe: {self.probe_samples} samples of {list(self.paid_arms)}, "
+                f"charged at {self.probe_cost_per_task:.4f} gpu-s per task. "
+                f"R4's `from_decisions` does not know about this — it has to be "
+                f"added on their side."
+            )
         for lam in self.lambdas:
             share = self.arm_share(lam)
             rendered = "  ".join(f"{arm}={value:.0%}"
@@ -307,25 +338,76 @@ class Sweep:
             "n_records": len(self.records),
             "degenerate_lambdas": list(self.degenerate_lambdas()),
             "mixed_lambdas": list(self.mixed_lambdas()),
+            "paid_arms": list(self.paid_arms),
+            "probe_samples": self.probe_samples,
+            "probe_cost_per_task": self.probe_cost_per_task,
             "arm_share": {
                 str(lam): self.arm_share(lam) for lam in self.lambdas
             },
         }
 
 
+def probe_surcharge(policy: PolicyHeads, scored: Mapping[str, Sequence[ArmScore]],
+                    *, cheap: str, k: int = PROBE_SAMPLES) -> dict[str, float]:
+    """What the self-consistency probe costs, per task, when it is used.
+
+    A probe is `k` cheap samples drawn on the same prompt to see how much the
+    model agrees with itself. `PROBE_FEATURES` read exactly that, and reading it
+    obliges the policy to have paid for it — a feature that quietly assumes
+    three extra generations already exist is a feature that makes the policy
+    look cheaper than any system that could actually run it.
+
+    The charge is unconditional and identical across arms, because the probe is
+    paid *before* the routing decision and whatever it says, the money is gone.
+    That means it does not move the argmax at a fixed λ — it moves the whole
+    policy rightward on the frontier. Which is the point: the probe has to earn
+    its cost through better decisions, not through free information.
+    """
+    per_task: dict[str, float] = {}
+    for task, scores in scored.items():
+        cheap_score = next((s for s in scores if s.arm == cheap), None)
+        if cheap_score is None:
+            raise DecisionError(
+                f"cannot price a probe for task {task!r}: it has no {cheap!r} "
+                f"arm, and a probe is k samples of the cheap model"
+            )
+        per_task[task] = k * cheap_score.e_cost
+    return per_task
+
+
 def sweep_lambda(policy: PolicyHeads, data: RolloutData, coefficients: Any, *,
                  lambdas: Sequence[float] = LAMBDA_GRID,
                  split: str | None = None,
-                 policy_name: str = "learned_D0") -> Sweep:
-    """Decide for every task at every λ. One fitted policy, the whole frontier."""
+                 policy_name: str = "learned_D0",
+                 probe_samples: int = PROBE_SAMPLES) -> Sweep:
+    """Decide for every task at every λ. One fitted policy, the whole frontier.
+
+    When the policy's features declare `paid_arms`, every arm's cost carries
+    the probe surcharge and each record reports it separately, so the charge is
+    visible rather than folded invisibly into `e_cost`.
+    """
     scored = score_tasks(policy, data, coefficients, split=split)
     if not lambdas:
         raise DecisionError("an empty lambda grid produces no frontier")
 
+    paid = policy.features.paid_arms
+    surcharge: dict[str, float] = {}
+    if paid:
+        from .gate import cheap_arm
+
+        surcharge = probe_surcharge(
+            policy, scored, cheap=cheap_arm(data), k=probe_samples,
+        )
+
     records: list[dict[str, Any]] = []
     for lam in lambdas:
         for task in sorted(scored):
-            scores = scored[task]
+            probe = surcharge.get(task, 0.0)
+            scores = tuple(
+                ArmScore(arm=s.arm, p_pass=s.p_pass,
+                         e_cost=s.e_cost + probe, e_latency=s.e_latency)
+                for s in scored[task]
+            )
             winner = choose(scores, lam)
             for score in scores:
                 records.append({
@@ -338,6 +420,7 @@ def sweep_lambda(policy: PolicyHeads, data: RolloutData, coefficients: Any, *,
                     "p_pass": score.p_pass,
                     "e_cost": score.e_cost,
                     "e_latency": score.e_latency,
+                    "probe_cost": probe,
                     "utility": score.utility(lam),
                     "chosen": score.arm == winner.arm,
                 })
@@ -349,6 +432,8 @@ def sweep_lambda(policy: PolicyHeads, data: RolloutData, coefficients: Any, *,
         publishable=data.publishable,
         lambdas=tuple(float(v) for v in lambdas),
         records=tuple(records),
+        paid_arms=tuple(paid),
+        probe_samples=probe_samples if paid else 0,
     )
 
 
