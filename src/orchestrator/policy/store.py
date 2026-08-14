@@ -140,6 +140,31 @@ LATENT_PREFIX = "_synth_"
 TASK_FIELDS: tuple[str, ...] = ("task_prompt", "task_entrypoint",
                                 "task_visible_tests")
 
+#: A run swept from a dirty worktree carries this suffix.
+DIRTY_SUFFIX = "-dirty"
+
+
+def is_publishable(run_id: str, manifest: Mapping[str, Any]) -> bool:
+    """Whether anything derived from this run may be published.
+
+    A run swept from a dirty worktree is stamped `-dirty` and is not
+    publishable: the recorded git sha does not describe the code that produced
+    the rows. Developing against one is fine; reporting from one is not, and
+    Phase 6 stamps the decision file accordingly.
+
+    The `-dirty` suffix overrides the manifest rather than being read from it.
+    A manifest is written by the process that produced the run; a run_id is
+    what every consumer already pins. If the two disagree, the one that cannot
+    be quietly regenerated wins.
+
+    This lives at module scope because two callers need it and they must not
+    disagree: `RolloutData.publishable`, and `orch-policy runs`, which is where
+    an operator actually looks before deciding what to report from.
+    """
+    if run_id.endswith(DIRTY_SUFFIX):
+        return False
+    return bool(manifest.get("publishable", False))
+
 
 @dataclass(frozen=True)
 class Label:
@@ -204,20 +229,13 @@ class RolloutData:
     def publishable(self) -> bool:
         """Whether anything derived from this run may be published.
 
-        A run swept from a dirty worktree is stamped `-dirty` and is not
-        publishable: the recorded git sha does not describe the code that
-        produced the rows. Developing against one is fine; reporting from one
-        is not, and Phase 6 stamps the decision file accordingly.
-
-        The `-dirty` suffix overrides the manifest rather than being read from
-        it. A manifest is written by the process that produced the run; a
-        run_id is what every consumer already pins. If the two disagree, the
-        one that cannot be quietly regenerated wins.
+        The rule itself is `is_publishable`, shared with the CLI. The only
+        thing decided here is *which* manifest carries the answer: R2's graded
+        manifest records grading counts and has no `publishable` key, so the
+        question is always put to R1's.
         """
-        if self.run_id.endswith("-dirty"):
-            return False
         source = self.generations_manifest or self.manifest
-        return bool(source.get("publishable", False))
+        return is_publishable(self.run_id, source)
 
     @property
     def has_cost(self) -> bool:

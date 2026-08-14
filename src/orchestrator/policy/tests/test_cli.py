@@ -220,6 +220,26 @@ def test_runs_on_an_empty_store_says_so(tmp_path, capsys):
     assert "no store" in capsys.readouterr().out
 
 
+def test_runs_marks_a_dirty_run_unpublishable_despite_its_manifest(fx, capsys):
+    """The listing is where an operator looks before reporting from a run.
+
+    A `-dirty` sweep keeps `publishable: true` in its manifest — the suffix is
+    what overrides it, and `store.is_publishable` is the one place that rule
+    lives. Reading the manifest key directly here would have shown the run as
+    publishable in the only view an operator actually consults.
+    """
+    dirty = f"{fx.run_id}-dirty"
+    (fx.root / fx.run_id).rename(fx.root / dirty)
+
+    manifest = json.loads((fx.root / dirty / "_MANIFEST.json").read_text())
+    assert manifest["publishable"] is True, "the suffix must be doing the work"
+
+    assert main(["runs", "--root", str(fx.root)]) == EXIT_OK
+    line = next(ln for ln in capsys.readouterr().out.splitlines()
+                if ln.startswith(dirty))
+    assert "[not publishable]" in line
+
+
 # -- the graded layer --------------------------------------------------------
 
 

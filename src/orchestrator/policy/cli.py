@@ -136,7 +136,8 @@ def _cmd_runs(args: argparse.Namespace) -> int:
         found = True
         manifest = json.loads((child / "_MANIFEST.json").read_text())
         costings = store.list_cost_fingerprints(root, child.name)
-        flag = "" if manifest.get("publishable", False) else "  [not publishable]"
+        publishable = store.is_publishable(child.name, manifest)
+        flag = "" if publishable else "  [not publishable]"
         graded = "graded" if (child / "_ROLLOUT_MANIFEST.json").exists() \
             else "UNGRADED"
         print(f"{child.name}  rows={manifest.get('n_rows', '?')}  "
