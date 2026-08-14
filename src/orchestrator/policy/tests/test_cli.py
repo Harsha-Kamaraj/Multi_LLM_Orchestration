@@ -354,3 +354,65 @@ def test_there_is_no_train_flag_that_opens_the_test_split():
     train = [a for a in build_parser()._subparsers._group_actions[0].choices]
     assert "train" in train
     assert "--test" not in text and "test-split" not in text
+
+
+# -- decide ------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def trained(fx, tmp_path_factory) -> Path:
+    """A D0 policy on disk, since `decide` takes a policy rather than fitting one."""
+    out = tmp_path_factory.mktemp("trained") / "policy"
+    main(["train", "--root", str(fx.root), "--run", fx.run_id,
+          "--tasks", str(fx.tasks_path), "--decision-point", "D0",
+          "--out", str(out)])
+    return out
+
+
+def decide_argv(fx: fixtures.Fixture, policy: Path, *extra: str) -> list[str]:
+    return [
+        "decide", "--root", str(fx.root), "--run", fx.run_id,
+        "--tasks", str(fx.tasks_path), "--policy", str(policy),
+        "--coefficients", str(fx.coefficients_path),
+        *extra,
+    ]
+
+
+def test_decide_sweeps_the_whole_frozen_grid(fx, trained, capsys):
+    from orchestrator.policy.decide import LAMBDA_GRID
+
+    assert main(decide_argv(fx, trained)) == EXIT_OK
+    out = capsys.readouterr().out
+    assert out.count("lambda=") == len(LAMBDA_GRID)
+
+
+def test_decide_writes_the_artifacts_r4_reads(fx, trained, tmp_path):
+    from orchestrator.policy import decide
+
+    out = tmp_path / "decisions"
+    assert main(decide_argv(fx, trained, "--out", str(out))) == EXIT_OK
+    assert (out / decide.DECISIONS_JSONL).exists()
+    assert (out / "decisions_manifest.json").exists()
+
+
+def test_a_costing_that_does_not_cover_the_arms_is_explained(fx, trained, capsys):
+    """R1 refuses to substitute another model's coefficients, which is right.
+    It has to reach the operator as a sentence, not a KeyError traceback."""
+    argv = [
+        "decide", "--root", str(fx.root), "--run", fx.run_id,
+        "--tasks", str(fx.tasks_path), "--policy", str(trained),
+        "--coefficients", "bench/cost_coefficients.json",
+    ]
+    assert main(argv) == EXIT_ERROR
+    assert "does not cover" in capsys.readouterr().err
+
+
+def test_decide_refuses_a_d1_policy(fx, tmp_path, capsys):
+    """Escalation cannot be replayed as a routing action without dropping the
+    cheap arm's already-spent cost."""
+    policy = tmp_path / "d1"
+    main(["train", "--root", str(fx.root), "--run", fx.run_id,
+          "--tasks", str(fx.tasks_path), "--decision-point", "D1",
+          "--out", str(policy)])
+    assert main(decide_argv(fx, policy)) == EXIT_ERROR
+    assert "already spent" in capsys.readouterr().err

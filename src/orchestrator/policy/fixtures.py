@@ -75,6 +75,10 @@ class Fixture:
     tasks_path: Path
     result: SynthResult
     cost_fingerprint: str | None = None
+    #: A costing covering this run's synthetic models. R1's committed
+    #: coefficients characterize the real Qwen models and refuse anything else,
+    #: so a fixture has to carry its own or the cost heads cannot convert.
+    coefficients_path: Path | None = None
 
     @property
     def truth(self) -> dict[str, Any]:
@@ -174,6 +178,50 @@ def write_cost_sidecar(root: Path, run_id: str, rows: list[dict[str, Any]],
     return fingerprint
 
 
+def write_cost_coefficients(path: Path, rows: list[dict[str, Any]]) -> Path:
+    """A costing that covers the fixture's own models.
+
+    R1's committed `bench/cost_coefficients.json` characterizes the two real
+    Qwen models, and `fit_for` raises on anything else rather than substituting
+    another model's weights — which is correct, and means a synthetic run has
+    no costing at all unless one is written for it. Without this the D0 → cost
+    → decision chain cannot be exercised on fixtures, which is where it gets
+    exercised first.
+
+    The cheap arm is made genuinely cheaper on both token rates, so λ has a
+    real trade to make. Coefficients are invented, and say so: `hardware` is
+    "synthetic" and no test treats these as measurements.
+    """
+    per_model = {
+        "synthetic/small": {"prefill": 2.0e-5, "decode": 0.004, "intercept": 0.30},
+        "synthetic/large": {"prefill": 8.0e-5, "decode": 0.020, "intercept": 0.90},
+    }
+    seen = sorted({str(row["model_id"]) for row in rows})
+    payload = {
+        "version": 1,
+        "hardware": "synthetic",
+        "usd_per_gpu_hour": 1.10,
+        "reference_batch": 1,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "notes": "invented, not measured — fixtures only",
+        "models": {
+            model: {
+                "1": {
+                    "intercept_s": per_model[model]["intercept"],
+                    "prefill_s_per_token": per_model[model]["prefill"],
+                    "decode_s_per_token": per_model[model]["decode"],
+                    "n": 72, "r2": 0.999, "rmse_s": 0.01,
+                }
+            }
+            for model in seen if model in per_model
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n",
+                    encoding="utf-8", newline="")
+    return path
+
+
 #: R2's graded layer, restated here for the same reason `store.py` restates it:
 #: `graders.rollout_store` is not on `main` yet.
 GRADED_ROWS_DIR = "rollouts"
@@ -240,6 +288,11 @@ def write_fixture(root: Path | str, config: SynthConfig | None = None, *,
 
     fingerprint = (write_cost_sidecar(root, run_id, result.rows)
                    if with_cost else None)
+    coefficients_path = (
+        write_cost_coefficients(directory / "cost_coefficients.json",
+                                result.rows)
+        if with_cost else None
+    )
     tasks_path = write_tasks(directory / "tasks.jsonl", result)
 
     if sealed:
@@ -273,4 +326,5 @@ def write_fixture(root: Path | str, config: SynthConfig | None = None, *,
         tasks_path=tasks_path,
         result=result,
         cost_fingerprint=fingerprint,
+        coefficients_path=coefficients_path,
     )

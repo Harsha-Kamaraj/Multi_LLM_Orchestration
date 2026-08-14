@@ -6,6 +6,7 @@ both absences are the enforcement rather than a check.
 
     orch-policy gate    --run <run_id> --tasks data/tasks/pilot.jsonl
     orch-policy train   --run <run_id> --tasks data/tasks/pilot.jsonl --out policy/
+    orch-policy decide  --run <run_id> --policy policy/ --out decisions/
     orch-policy fixture --out runs --tasks 400
     orch-policy runs
 
@@ -147,6 +148,51 @@ def _cmd_train(args: argparse.Namespace) -> int:
     return EXIT_OK if policy.meets_calibration_target else EXIT_GATE_FAILED
 
 
+def _cmd_decide(args: argparse.Namespace) -> int:
+    """Sweep λ over a fitted policy and write `decisions.parquet`. Phase 6.
+
+    Takes a policy directory rather than fitting one, so the artifact chain is
+    explicit: `train` produces a policy, `decide` replays it across the frozen
+    grid. Fitting inline would make every sweep a different model.
+
+    Exits non-zero when no λ routes tasks both ways. That is a real outcome —
+    the policy is a constant at every price — and it should not pass quietly
+    just because the file was written successfully.
+    """
+    from . import decide, heads
+    from ..workers.cost import CostCoefficients
+
+    policy = heads.PolicyHeads.load(args.policy)
+    coefficients = CostCoefficients.load(args.coefficients)
+
+    data = store.load_rollouts(
+        args.root, args.run,
+        tasks_path=args.tasks,
+        cost_fingerprint=args.cost,
+        layer=args.layer,
+    )
+    if data.run_id != policy.run_id:
+        print(
+            f"NOTE: policy was fitted on {policy.run_id} and is being applied "
+            f"to {data.run_id}. Legitimate for scoring a held-out run, and "
+            f"wrong if it was meant to be the same one.",
+            file=sys.stderr,
+        )
+
+    sweep = decide.sweep_lambda(
+        policy, data, coefficients,
+        split=args.split,
+        policy_name=args.name,
+    )
+    print(sweep.summary())
+
+    if args.out:
+        directory = decide.write_decisions(sweep, args.out)
+        print(f"\nwrote {directory}/")
+
+    return EXIT_OK if sweep.mixed_lambdas() else EXIT_GATE_FAILED
+
+
 def _cmd_fixture(args: argparse.Namespace) -> int:
     from schemas.synth import SynthConfig
 
@@ -237,6 +283,29 @@ def build_parser() -> argparse.ArgumentParser:
     train_cmd.add_argument("--out", type=Path, default=None,
                            help="directory for policy.pkl and its JSON sidecars")
     train_cmd.set_defaults(func=_cmd_train)
+
+    decide_cmd = sub.add_parser(
+        "decide",
+        help="sweep lambda over a fitted policy and write decisions",
+        description="Phase 6. Replays a trained policy across the frozen "
+                    "lambda grid and writes decisions.parquet for R4.",
+    )
+    _add_run_arguments(decide_cmd)
+    decide_cmd.add_argument("--policy", type=Path, required=True,
+                            help="directory written by `orch-policy train`")
+    decide_cmd.add_argument("--coefficients", type=Path,
+                            default=Path("bench") / "cost_coefficients.json",
+                            help="R1's pinned costing. E_cost predicts tokens; "
+                                 "this converts them")
+    decide_cmd.add_argument("--split", default="val",
+                            help="which split to decide over. There is no "
+                                 "value here that reaches test")
+    decide_cmd.add_argument("--name", default="learned_D0",
+                            help="policy name carried into R4's comparison")
+    decide_cmd.add_argument("--out", type=Path, default=None,
+                            help="directory for decisions.parquet and its "
+                                 "authoritative JSONL")
+    decide_cmd.set_defaults(func=_cmd_decide)
 
     fixture_cmd = sub.add_parser(
         "fixture", help="write a synthetic run with a planted signal")
