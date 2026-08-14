@@ -270,12 +270,33 @@ class PolicyHeads:
         `decisions.parquet` is Phase 6 and is not written here — a policy and
         the decisions it produced at a given λ are separate artifacts, because
         the λ sweep re-reads one policy many times.
+
+        ## The feature set is not pickled
+
+        Only fitted *state* goes into the pickle — estimators, scaling
+        constants, calibration knots. The `FeatureSet` is code, and pickling
+        code freezes a copy of R3's feature builders inside an artifact where
+        nobody will think to look at them.
+
+        Instead the decision point is recorded and the feature set is rebuilt
+        from it on load, then checked against the column names the heads were
+        actually fitted with. So editing a feature builder and reloading an old
+        policy *fails loudly* rather than scoring with new code under old
+        coefficients — which is the failure this would otherwise cause, and it
+        would look like a modelling result.
         """
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
 
         with (directory / POLICY_PICKLE).open("wb") as handle:
-            pickle.dump(self, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            pickle.dump({
+                "run_id": self.run_id,
+                "decision_point": self.decision_point,
+                "publishable": self.publishable,
+                "feature_names": self.features.names,
+                "arms": self.arms,
+                "calibration": self.calibration,
+            }, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
         (directory / HEADS_MANIFEST).write_text(
             json.dumps(self.manifest(), indent=2, sort_keys=True) + "\n",
@@ -297,8 +318,30 @@ class PolicyHeads:
 
     @staticmethod
     def load(directory: Path | str) -> "PolicyHeads":
+        """Rebuild the policy, refusing one whose features have moved under it."""
         with (Path(directory) / POLICY_PICKLE).open("rb") as handle:
-            return pickle.load(handle)
+            payload = pickle.load(handle)
+
+        features = feature_set(payload["decision_point"])
+        recorded = tuple(payload["feature_names"])
+        if features.names != recorded:
+            extra = sorted(set(features.names) - set(recorded))
+            missing = sorted(set(recorded) - set(features.names))
+            raise HeadError(
+                f"this policy was fitted against a different version of the "
+                f"{payload['decision_point']} feature set. Added since: "
+                f"{extra}. Gone: {missing}. Reordering counts too. Refit it — "
+                f"scoring new features with old coefficients produces numbers "
+                f"that look entirely reasonable."
+            )
+        return PolicyHeads(
+            run_id=payload["run_id"],
+            decision_point=payload["decision_point"],
+            features=features,
+            arms=payload["arms"],
+            calibration=payload["calibration"],
+            publishable=payload["publishable"],
+        )
 
     def summary(self) -> str:
         lines = [
