@@ -200,36 +200,50 @@ An evaluation harness that has never been run against a known answer is not vali
 
 ---
 
-## Week 1 (Phase 0) — status at 13 Aug 2026
+## Status — 14 Aug 2026
 
-R4 is the furthest-along seat: `schemas/` and `eval/` both landed, 209 tests
-green. What is missing is not code, it is anything to point the code at.
+**Every artifact R4 owes is built, tested, and committed.** The seat is code-complete.
+243 tests green in `eval/` and `schemas/`, no GPU and no network.
+
+What remains is not R4 work: it is R3's policy, and a Phase 1 corpus large enough
+to test the primary hypothesis on.
+
+### Week 1 (Phase 0)
 
 | | Item | Where it stands |
 |---|---|---|
-| ✅ | Own the `schemas/` freeze | `schemas/` is frozen — `Task` + `Rollout` JSON schemas, `SCHEMA_VERSION` guards, a validation layer with rollout invariants, and a conformance test binding R1's emitted row to the contract |
-| ❌ | …day 3, all four sign off | Landed unilaterally and past day 3. The artifact is right; the ratification step named in `docs/CONTRIBUTING.md` § Schema changes did not happen. |
-| ❌ | Power analysis off measured discordance → the corpus size everyone commits to | `mcnemar_sample_size()` and `bootstrap_power()` are implemented and tested. Both need a **measured** discordance rate, and there is no pilot. The 1,000–1,500 figure below is still an assumption. |
-| ✅ | All seven baselines implemented against fixtures, including `heuristic_route` | Six in `standard_baselines()`; `heuristic_route` lives in `eval/heuristics.py` because it must be fitted on validation first. It is tuned across families and swept to a frontier via `tuned_frontier()`, not shipped as a point. |
-| ✅ | Cluster bootstrap + McNemar, validated on the planted signal | `cluster_bootstrap` resamples tasks *and* seeds, `mcnemar_exact`, `benjamini_hochberg`. `eval/tests/test_integration.py` checks the planted-optimal policy is recovered at the planted effect size. |
-| ❌ | Oracle-gap study on the pilot | `oracle_headroom()` is implemented and tested. There is no pilot. |
-| ✅ | Leakage audit tooling — independent of R3's feature code | `eval/leakage.py` — seven independent checks: the planted canary, a column allowlist, split disjointness, an AUC upper bound, normalization scope, seed aggregation, and ladder causality. It imports nothing from R3, which is the property that makes it an audit rather than a self-check. |
+| ✅ | Own the `schemas/` freeze | `Task` + `Rollout` JSON schemas, `SCHEMA_VERSION` guards, validation with cross-field invariants, and a conformance test binding R1's emitted row to the contract. R2's 200-task corpus validates against `task.schema.json` with zero errors — two roles built independently and the contract held. |
+| ⚠️ | …day 3, all four sign off | The artifact is right; the ratification step in `docs/CONTRIBUTING.md` § Schema changes never happened. Recorded rather than quietly dropped. |
+| ✅ | All seven baselines, including `heuristic_route` | Six fixed baselines in `standard_baselines()`; `heuristic_route` in `eval/heuristics.py`, tuned on validation and swept to a frontier via `tuned_frontier()` — never shipped as a point. |
+| ✅ | Cluster bootstrap + McNemar, validated on the planted signal | Resamples tasks *and* seeds. Coverage verified at ~95% over 120 simulated draws. The interval covers the planted arm gap, and McNemar agrees with the bootstrap on direction — if they disagreed, one is wrong and the report would show whichever ran first. |
+| ✅ | Leakage audit, independent of R3 | Seven checks: planted canary, column allowlist per decision point, split disjointness, an AUC upper bound, normalization scope, seed aggregation, ladder causality. Imports nothing from R3 — the property that makes it an audit rather than a self-check. |
+| ✅ | Power analysis | `mcnemar_sample_size()` (Connor 1987) and `bootstrap_power()`. Wired to `orch-eval power`. Still needs a **measured** discordance from the pilot; the 1,000–1,500 figure remains an assumption until it is run. |
+| ⏸ | Oracle-gap study on the pilot | `orch-eval gate` computes it. Blocked only on access to the graded store, which is gitignored and lives on R1's machine. |
 
-Also built, beyond the week-1 list: the matched-cost frontier
-(`compare_at_matched_cost`, `pareto_front`, `frontier_dominates`), the full
-five-cell router confusion matrix, a loader that refuses the test split unless
-`unlock_test_split()` is called with a reason and a committed pre-registration
-file, a deterministic `results.json` builder with `compare_to_golden()`, and the
-`orch-eval` CLI (`report`, `audit`, `power`, `golden`).
+### Everything else R4 owns
 
-**Still open for R4:**
+| | Artifact | Where |
+|---|---|---|
+| ✅ | Frozen splits, hash-assigned | `data/splits/pilot_200.json` — salt `pilot-2026-08-13`, corpus hash `fcc0a6fd6cbd05dc`, 111/44/45. Assigned by hashing `task_id`, **not** by shuffling: growing the corpus from 200 to 1,000 leaves every existing assignment untouched. Under a shuffle, a task visible during the pilot silently lands in the frozen test set. |
+| ✅ | Split verification | `verify()` recomputes every stored assignment from the salt, so a hand-edited manifest is caught — the edit someone makes at 2am in week 9. Corpus content is hashed too: regenerating `data/tasks/` in place is a different experiment. |
+| ✅ | Pre-registration | [`docs/PREREGISTRATION.md`](./PREREGISTRATION.md) — metric, comparison, tests, BH as one family, exclusions, stopping rule, and a falsification table, all fixed before the split was opened. `unlock_test_split()` requires its path. |
+| ✅ | `results.json` + golden gate | Deterministic serialization — floats rounded at the boundary, seeds recorded, keys sorted. `compare_to_golden()` reports which JSON path moved. |
+| ✅ | `report.html` | `eval/html.py`. Self-contained: no CDN, no webfont, no script. Every interval is *drawn* against a zero line, because whether it crosses zero is the verdict and a table of digits lets a reader skim past it. Theme-complete across all three viewer states. |
+| ✅ | Failure taxonomy | `eval/taxonomy.py`, built on R2's real vocabulary. One category per row, severity-ordered, `reward_hack` outranking `solved`. `explain_gap()` attributes an arm gap to a mechanism. |
+| ✅ | Router confusion matrix | Five cells, plus `oracle_headroom()` reported *before* any policy is judged — so a small gap is not misread as a weak policy when it is a saturated problem. |
+| ✅ | Matched-cost frontier | `compare_at_matched_cost()` reports only the overlapping cost range and refuses to extrapolate past a measured endpoint. A win at a different price is not a win. |
+| ✅ | Phase 0 gate, adjudicated | `eval/gates.py` + `orch-eval gate`. Four quantities, thresholds, and what each failure means. **Unmeasured is neither passed nor failed** — a gate that quietly skips itself lets the phase advance on evidence nobody produced. |
+| ✅ | CLI | `orch-eval report · audit · power · golden · splits · taxonomy · gate` |
 
-| | |
+### Blocked, and on whom
+
+| | Blocked on |
 |---|---|
-| ❌ | `data/splits/` — the 60/20/20 split manifest does not exist |
-| ❌ | A **committed golden** `results.json`. `compare_to_golden()` is written and tested; there is no baseline file for it to compare against, so the regression gate has nothing to guard yet. |
-| ❌ | A pre-registration document. The loader demands one before unlocking test; none is committed. |
-| ❌ | An actual report — the builder is real, the numbers it would format do not exist |
+| The pilot's oracle-gap and discordance numbers | The graded store is gitignored; needs R1 to share `runs/2026-08-13-c76a55d-4f4767` or run `orch-eval gate` against it |
+| `AUC_D0` | Needs R2's corpus joined by `task_id` — prompt features are **not** on the rollout row, which carries `text` and `code`, model *output* |
+| A committed golden `results.json` | Pins to a real run; generating one from fixtures would gate against fiction |
+| The 1,000-task frozen split | R2's corpus is 200. The hash-based design means growing it costs nothing and moves nothing |
+| The primary hypothesis | R3's `decisions.parquet`. Every baseline it will be compared against is already built and tested |
 
 ---
 
