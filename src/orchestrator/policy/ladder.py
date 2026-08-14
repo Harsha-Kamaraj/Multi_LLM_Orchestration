@@ -274,9 +274,22 @@ class RepairGate:
     repair: Strategy
     lambdas: tuple[float, ...]
     repair_wins: tuple[float, ...]
+    #: How many replayed ladders actually contained a repair attempt.
+    n_repairs: int = 0
 
     @property
     def verdict(self) -> str:
+        """PASS, FAIL, or NO REPAIRS — and the third is not a pass.
+
+        With no repair rows the repair strategy degenerates into
+        `always_small`, which beats escalation at high λ simply by declining to
+        spend. That is a true statement about doing nothing and an entirely
+        false answer to "does repair pay for itself" — and it is the state
+        every real store is in until R1 runs the repair arm, so it has to be
+        named rather than scored.
+        """
+        if not self.n_repairs:
+            return "NO REPAIRS"
         return "PASS" if self.repair_wins else "FAIL"
 
     @property
@@ -302,7 +315,8 @@ class RepairGate:
 
     def summary(self) -> str:
         lines = [
-            f"[{self.verdict}] repair vs escalation over {self.repair.n} ladders",
+            f"[{self.verdict}] repair vs escalation over {self.repair.n} "
+            f"ladders, {self.n_repairs} of which were repaired",
             f"    always_small  acc={self.always_small.accuracy:.4f}  "
             f"cost={self.always_small.cost:.4f}",
             f"    repair        acc={self.repair.accuracy:.4f}  "
@@ -313,7 +327,13 @@ class RepairGate:
             f"{self.repair_efficiency:.4f}  escalation "
             f"{self.escalation_efficiency:.4f}",
         ]
-        if self.repair_wins:
+        if not self.n_repairs:
+            lines.append(
+                "    no repair was logged for any failure, so the repair "
+                "strategy is `always_small` under another name. Run the "
+                "repair arm before reading this as a result."
+            )
+        elif self.repair_wins:
             lines.append(
                 f"    repair wins on utility for {len(self.repair_wins)} of "
                 f"{len(self.lambdas)} lambdas, "
@@ -331,6 +351,7 @@ class RepairGate:
     def as_dict(self) -> dict[str, Any]:
         return {
             "verdict": self.verdict,
+            "n_repairs": self.n_repairs,
             "delta_accuracy": self.delta_accuracy,
             "delta_cost": self.delta_cost,
             "repair_efficiency": self.repair_efficiency,
@@ -369,6 +390,7 @@ def measure_repair_gate(data: RolloutData, *,
     solved_small: list[float] = []
     solved_repair: list[float] = []
     solved_escalate: list[float] = []
+    n_repairs = 0
     cost_small: list[float] = []
     cost_repair: list[float] = []
     cost_escalate: list[float] = []
@@ -416,6 +438,7 @@ def measure_repair_gate(data: RolloutData, *,
             solved_repair.append(0.0)
             cost_repair.append(base_cost)
         else:
+            n_repairs += 1
             solved_repair.append(float(solved(repair_node.row)))
             cost_repair.append(ladder.cumulative_cost(1, column))
 
@@ -442,4 +465,5 @@ def measure_repair_gate(data: RolloutData, *,
         repair=repair,
         lambdas=lambdas,
         repair_wins=wins,
+        n_repairs=n_repairs,
     )
