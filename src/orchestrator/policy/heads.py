@@ -168,10 +168,22 @@ class ArmHeads:
         return self._convert(coefficients.usd, prefill, decode)
 
     def _convert(self, fn, prefill: np.ndarray, decode: np.ndarray) -> np.ndarray:
-        return np.array([
-            float(fn(self.model_id, float(p), float(d)))
-            for p, d in zip(prefill, decode)
-        ])
+        try:
+            return np.array([
+                float(fn(self.model_id, float(p), float(d)))
+                for p, d in zip(prefill, decode)
+            ])
+        except KeyError as exc:
+            # R1 raises rather than falling back to another model's
+            # coefficients, which is right — the fallback would produce cost
+            # numbers that look fine and describe different weights. Restated
+            # as a policy error so the CLI prints it instead of a traceback.
+            raise HeadError(
+                f"arm {self.arm!r} serves {self.model_id!r}, which the pinned "
+                f"costing does not cover, so its cost cannot be converted. "
+                f"Point --coefficients at a characterization that includes it. "
+                f"Underlying: {exc}"
+            ) from exc
 
     def _design(self, rows: Sequence[Mapping[str, Any]],
                 features: FeatureSet) -> np.ndarray:
