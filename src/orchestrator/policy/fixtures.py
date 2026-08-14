@@ -178,6 +178,100 @@ def write_cost_sidecar(root: Path, run_id: str, rows: list[dict[str, Any]],
     return fingerprint
 
 
+#: R1 registered `repair_small` early so the arm registry is not reshaped
+#: mid-project. Nothing has been run through it, so the ladder R3 develops
+#: against is synthesized here.
+REPAIR_ARM = "repair_small"
+
+#: Invented repair semantics, and labelled as invented. A repair attempt
+#: succeeds with probability `base + slope * (visible fraction at step 0)`:
+#: a candidate that already passed three of four visible tests is closer to
+#: correct than one that passed none, so it is more repairable.
+#:
+#: This plants a *learnable* structure rather than a constant, which is the
+#: point — a repair policy that cannot beat "always repair" on this fixture has
+#: a bug, because the fixture contains a signal by construction. The numbers
+#: are chosen so repair is neither free money nor useless; whether it pays for
+#: itself is left to the measurement rather than baked in.
+REPAIR_BASE_RATE = 0.10
+REPAIR_SLOPE = 0.45
+
+#: A repair prompt carries the failed candidate and the visible-test output, so
+#: it is longer than the original. Decode is comparable — the model writes
+#: another solution of similar size.
+REPAIR_PREFILL_MULTIPLIER = 1.9
+
+
+def add_repair_ladder(rows: list[dict[str, Any]], *, seed: int = 0,
+                      arm: str = "small") -> list[dict[str, Any]]:
+    """Step-1 repair attempts, seeded from each failed step-0 sample.
+
+    One round, matching ROADMAP's Phase 2 deliverable. Only *failed* step-0
+    rows get a child: repairing a solved candidate is not a decision any policy
+    would make, and generating those rows would let a ladder model learn from
+    cells the real ladder would never contain.
+
+    `rollout_id` is derived through R1's `Generation.rollout_id` rather than
+    restated here. The derivation folds in `ladder_step` and
+    `parent_rollout_id`, which is exactly what keeps a repair row distinct from
+    the sample it repairs.
+    """
+    import random
+
+    from ..workers.generation import Generation
+
+    rng = random.Random(seed)
+    children: list[dict[str, Any]] = []
+
+    for parent in rows:
+        if str(parent["arm"]) != arm or int(parent.get("ladder_step", 0)) != 0:
+            continue
+        hidden_total = int(parent["hidden_total"] or 0)
+        if not hidden_total or int(parent["hidden_passed"] or 0) >= hidden_total:
+            continue  # already solved; nothing to repair
+
+        visible_total = int(parent["visible_total"] or 1)
+        closeness = int(parent["visible_passed"] or 0) / max(visible_total, 1)
+        succeeds = rng.random() < REPAIR_BASE_RATE + REPAIR_SLOPE * closeness
+
+        prefill = int(round(int(parent["prefill_tokens"])
+                            * REPAIR_PREFILL_MULTIPLIER))
+        decode = int(parent["decode_tokens"])
+        scale = (prefill + decode) / max(
+            int(parent["prefill_tokens"]) + decode, 1
+        )
+
+        child = dict(parent)
+        child.update({
+            "arm": REPAIR_ARM,
+            "ladder_step": 1,
+            "parent_rollout_id": parent["rollout_id"],
+            "prefill_tokens": prefill,
+            "decode_tokens": decode,
+            "gpu_seconds": float(parent["gpu_seconds"]) * scale,
+            "imputed_latency_s": float(parent["imputed_latency_s"]) * scale,
+            "hidden_passed": hidden_total if succeeds else min(
+                int(parent["hidden_passed"] or 0) + 1, hidden_total - 1
+            ),
+            "visible_passed": visible_total if succeeds else int(
+                parent["visible_passed"] or 0
+            ),
+            "code": f"def solve():  # repaired {parent['task_id']}\n    ...\n",
+        })
+        child["rollout_id"] = Generation(
+            run_id=str(child["run_id"]),
+            task_id=str(child["task_id"]),
+            arm=REPAIR_ARM,
+            seed=int(child["seed"]),
+            params_hash=str(child["params_hash"]),
+            ladder_step=1,
+            parent_rollout_id=str(parent["rollout_id"]),
+        ).rollout_id
+        children.append(child)
+
+    return children
+
+
 def write_cost_coefficients(path: Path, rows: list[dict[str, Any]]) -> Path:
     """A costing that covers the fixture's own models.
 
@@ -249,7 +343,8 @@ def write_fixture(root: Path | str, config: SynthConfig | None = None, *,
                   seed: int = 0, sealed: bool = True,
                   with_cost: bool = True,
                   layout: str = "generations",
-                  seal_graded: bool = True) -> Fixture:
+                  seal_graded: bool = True,
+                  with_ladder: bool = False) -> Fixture:
     """Materialize a synthetic run as a readable run directory.
 
     `layout` picks the shape on disk:
@@ -276,21 +371,27 @@ def write_fixture(root: Path | str, config: SynthConfig | None = None, *,
     run_id = result.run_id
     directory = root / run_id
 
+    # Appended rather than merged into `result.rows`, so `result.truth` keeps
+    # describing exactly the rows the generator planted and nothing here can be
+    # mistaken for R4's ground truth.
+    rows = list(result.rows)
+    if with_ladder:
+        rows = rows + add_repair_ladder(rows, seed=seed)
+
     if layout == "split":
         ungraded = [
             {**row, **{column: None for column in _GRADE_COLUMNS}}
-            for row in result.rows
+            for row in rows
         ]
         _write_part(directory / ROWS_DIR, ungraded)
-        _write_part(directory / GRADED_ROWS_DIR, result.rows)
+        _write_part(directory / GRADED_ROWS_DIR, rows)
     else:
-        _write_part(directory / ROWS_DIR, result.rows)
+        _write_part(directory / ROWS_DIR, rows)
 
-    fingerprint = (write_cost_sidecar(root, run_id, result.rows)
+    fingerprint = (write_cost_sidecar(root, run_id, rows)
                    if with_cost else None)
     coefficients_path = (
-        write_cost_coefficients(directory / "cost_coefficients.json",
-                                result.rows)
+        write_cost_coefficients(directory / "cost_coefficients.json", rows)
         if with_cost else None
     )
     tasks_path = write_tasks(directory / "tasks.jsonl", result)
@@ -301,7 +402,7 @@ def write_fixture(root: Path | str, config: SynthConfig | None = None, *,
             "schema_version": result.rows[0]["schema_version"],
             "sealed_at": f"{result.truth['config'].date}T00:00:00Z",
             "publishable": not run_id.endswith("-dirty"),
-            "n_rows": len(result.rows),
+            "n_rows": len(rows),
             "source": "schemas.synth",
         }, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -312,9 +413,9 @@ def write_fixture(root: Path | str, config: SynthConfig | None = None, *,
         (directory / GRADED_MANIFEST_NAME).write_text(json.dumps({
             "run_id": run_id,
             "sealed_at": f"{result.truth['config'].date}T00:00:00Z",
-            "n_rows": len(result.rows),
+            "n_rows": len(rows),
             "solved_count": sum(
-                1 for row in result.rows
+                1 for row in rows
                 if row["hidden_total"] and row["hidden_passed"] == row["hidden_total"]
             ),
             "source": "schemas.synth",
