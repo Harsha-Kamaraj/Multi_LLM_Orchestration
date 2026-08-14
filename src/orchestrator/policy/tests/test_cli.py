@@ -416,3 +416,50 @@ def test_decide_refuses_a_d1_policy(fx, tmp_path, capsys):
           "--out", str(policy)])
     assert main(decide_argv(fx, policy)) == EXIT_ERROR
     assert "already spent" in capsys.readouterr().err
+
+
+# -- repair ------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def laddered(tmp_path_factory) -> fixtures.Fixture:
+    return fixtures.write_fixture(tmp_path_factory.mktemp("ladder_cli"),
+                                  SynthConfig(n_tasks=300, seeds=3),
+                                  with_ladder=True)
+
+
+def test_repair_reports_all_three_strategies(laddered, capsys):
+    argv = ["repair", "--root", str(laddered.root), "--run", laddered.run_id,
+            "--tasks", str(laddered.tasks_path)]
+    assert main(argv) == EXIT_OK
+    out = capsys.readouterr().out
+    for name in ("always_small", "repair", "escalate"):
+        assert name in out
+    assert "efficiency" in out
+
+
+def test_repair_on_a_store_with_none_does_not_exit_zero(fx, capsys):
+    """NO REPAIRS is not a pass, and it is the state every real store is in."""
+    argv = ["repair", "--root", str(fx.root), "--run", fx.run_id,
+            "--tasks", str(fx.tasks_path)]
+    assert main(argv) == EXIT_GATE_FAILED
+    assert "NO REPAIRS" in capsys.readouterr().out
+
+
+def test_repair_writes_its_verdict(laddered, tmp_path):
+    out = tmp_path / "repair.json"
+    argv = ["repair", "--root", str(laddered.root), "--run", laddered.run_id,
+            "--tasks", str(laddered.tasks_path), "--out", str(out)]
+    assert main(argv) == EXIT_OK
+    payload = json.loads(out.read_text())
+    assert payload["verdict"] == "PASS"
+    assert payload["n_repairs"] > 0
+
+
+def test_the_fixture_command_can_write_a_ladder(tmp_path, capsys):
+    assert main(["fixture", "--out", str(tmp_path), "--tasks", "60",
+                 "--seeds", "2", "--with-ladder"]) == EXIT_OK
+    run_id = capsys.readouterr().out.split("run_id")[1].split()[0]
+    rows = (tmp_path / run_id / "generations").glob("part-*.jsonl")
+    text = next(rows).read_text()
+    assert '"ladder_step": 1' in text
